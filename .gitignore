@@ -1,0 +1,17 @@
+node_modules/
+dist/
+release/
+out/
+build/
+*.log
+*.tmp
+.tmp_*/
+.env
+.env.*
+.DS_Store
+Thumbs.db
+backups/
+design-preview-*.html
+design-preview-*.svg
+*.tgz
+

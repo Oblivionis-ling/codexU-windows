@@ -1,0 +1,57 @@
+{
+  "name": "codexu-windows",
+  "version": "0.1.0",
+  "description": "Windows desktop widget for Codex usage, limits, token value and today's task board.",
+  "main": "src/main.js",
+  "author": "CodexU Windows",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "electron .",
+    "smoke": "node scripts/smoke-test.js",
+    "pack": "electron-builder --win dir",
+    "dist": "electron-builder --win portable"
+  },
+  "dependencies": {
+    "@openai/codex": "0.142.5"
+  },
+  "devDependencies": {
+    "electron": "43.0.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.codexu.windows",
+    "productName": "CodexU Windows",
+    "compression": "store",
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/@openai/codex-win32-x64/**",
+      "node_modules/@openai/codex/**/vendor/**"
+    ],
+    "win": {
+      "icon": "src/assets/codexu-icon.ico",
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "CodexU-Windows-${version}-portable.${ext}"
+    },
+    "portable": {
+      "artifactName": "CodexU-Windows-${version}-portable.${ext}"
+    }
+  }
+}
