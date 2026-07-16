@@ -15,7 +15,7 @@ try {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const ACTIVE_WINDOW_MS = 15 * 60 * 1000;
 const USAGE_READ_CONCURRENCY = 4;
-const PRICING_TABLE_VERSION = 'codexu-2026-07';
+const PRICING_TABLE_VERSION = 'codex-usage-2026-07';
 const usageFileCache = new Map();
 
 function codexHome() {
@@ -881,7 +881,7 @@ function tryAppServerCommand(command, timeoutMs) {
       method: 'initialize',
       params: {
         capabilities: { experimentalApi: true },
-        clientInfo: { name: 'codexu-windows', version: APP_VERSION }
+        clientInfo: { name: 'codex-usage', version: APP_VERSION }
       }
     };
     send(initialize);

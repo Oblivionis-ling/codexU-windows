@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 const allowedWindowActions = new Set(['minimize', 'hide', 'toggleAlwaysOnTop']);
 
-contextBridge.exposeInMainWorld('codexU', {
+contextBridge.exposeInMainWorld('codexUsage', {
   getSnapshot: () => ipcRenderer.invoke('snapshot:get'),
   refreshSnapshot: () => ipcRenderer.invoke('snapshot:refresh'),
   getPreferences: () => ipcRenderer.invoke('preferences:get'),

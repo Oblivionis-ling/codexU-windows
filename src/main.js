@@ -3,13 +3,14 @@ const { Worker } = require('worker_threads');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
-const { loadSnapshot } = require('./services/codexData');
 const { fetchFullResetCredits } = require('./services/fullResetCredits');
 const { updateFullResetHistory } = require('./services/resetHistory');
 
 const RATE_LIMIT_CACHE_GRACE_MS = 5 * 60 * 1000;
 const FULL_RESET_DETAILS_REFRESH_MS = 60 * 1000;
 const FULL_RESET_DETAILS_CACHE_GRACE_MS = 5 * 60 * 1000;
+
+app.setName('Codex-Usage');
 
 let mainWindow;
 let tray;
@@ -104,56 +105,6 @@ function mergeWithCachedLimits(nextSnapshot, previousSnapshot) {
   return merged;
 }
 
-if (process.argv.includes('--smoke')) {
-  app
-    .whenReady()
-    .then(async () => {
-      const snapshot = await loadSnapshot();
-      try {
-        snapshot.fullResetCredits = await fetchFullResetCredits({
-          fetchImpl: (url, options) => net.fetch(url, options)
-        });
-      } catch (error) {
-        snapshot.diagnostics.push({
-          id: 'full-reset-details-unavailable',
-          message: `Full reset 到期详情暂时不可用：${error.message}`
-        });
-      }
-      return snapshot;
-    })
-    .then((snapshot) => {
-      const report = JSON.stringify(
-        {
-          refreshedAt: snapshot.refreshedAt,
-          hasPrimaryLimit: Boolean(snapshot.primary),
-          hasSecondaryLimit: Boolean(snapshot.secondary),
-          primary: snapshot.primary,
-          secondary: snapshot.secondary,
-          account: snapshot.account,
-          fullResetCredits: snapshot.fullResetCredits,
-          localThreads: snapshot.local && snapshot.local.threadsCount,
-          todayTokens: snapshot.local && snapshot.local.todayTokens,
-          sevenDayTokens: snapshot.local && snapshot.local.sevenDayTokens,
-          lifetimeTokens: snapshot.local && snapshot.local.lifetimeTokens,
-          detailEvents: snapshot.local && snapshot.local.detailedUsage && snapshot.local.detailedUsage.tokenEvents,
-          diagnostics: snapshot.diagnostics.map((item) => item.message)
-        },
-        null,
-        2
-      );
-      if (process.env.CODEXU_SMOKE_OUT) {
-        fs.writeFileSync(process.env.CODEXU_SMOKE_OUT, report);
-      } else {
-        console.log(report);
-      }
-      app.exit(0);
-    })
-    .catch((error) => {
-      console.error(error);
-      app.exit(1);
-    });
-}
-
 function preferencesPath() {
   return path.join(app.getPath('userData'), 'preferences.json');
 }
@@ -226,10 +177,8 @@ function applyAlwaysOnTop() {
 }
 
 function createTrayImage() {
-  const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'codexu-icon.ico'));
-  if (!icon.isEmpty()) return icon.resize({ width: 16, height: 16 });
   return nativeImage
-    .createFromPath(path.join(__dirname, 'assets', 'codexu-icon.png'))
+    .createFromPath(path.join(__dirname, 'assets', 'codex-usage.ico'))
     .resize({ width: 16, height: 16 });
 }
 
@@ -259,8 +208,8 @@ function createWindow() {
     show: false,
     alwaysOnTop: preferences.alwaysOnTop,
     backgroundColor: '#00000000',
-    title: 'CodexU Windows',
-    icon: path.join(__dirname, 'assets', 'codexu-icon.ico'),
+    title: 'Codex-Usage',
+    icon: path.join(__dirname, 'assets', 'codex-usage.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -373,7 +322,7 @@ function updateTrayMenu() {
 
 function createTray() {
   tray = new Tray(createTrayImage());
-  tray.setToolTip('CodexU Windows');
+  tray.setToolTip('Codex-Usage');
   tray.on('click', toggleWindow);
   updateTrayMenu();
 }
@@ -659,19 +608,17 @@ function registerIpc() {
   });
 }
 
-if (!process.argv.includes('--smoke')) {
-  app.whenReady().then(async () => {
-    app.setAppUserModelId('com.codexu.windows');
-    loadPreferences();
-    loadResetHistory();
-    registerIpc();
-    createWindow();
-    createTray();
-    if (!globalShortcut.register('Control+U', toggleWindow)) {
-      console.warn('Failed to register the Ctrl+U global shortcut.');
-    }
-  });
-}
+app.whenReady().then(async () => {
+  app.setAppUserModelId('io.github.oblivionisling.codexusage');
+  loadPreferences();
+  loadResetHistory();
+  registerIpc();
+  createWindow();
+  createTray();
+  if (!globalShortcut.register('Control+U', toggleWindow)) {
+    console.warn('Failed to register the Ctrl+U global shortcut.');
+  }
+});
 
 app.on('window-all-closed', (event) => {
   event.preventDefault();

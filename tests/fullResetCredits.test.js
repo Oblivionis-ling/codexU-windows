@@ -40,7 +40,7 @@ test('full-reset details fall back to the available credit list count', () => {
 });
 
 test('Codex credentials are read without returning unrelated tokens', async (t) => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'codexu-auth-'));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-usage-auth-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const authPath = path.join(directory, 'auth.json');
   fs.writeFileSync(
@@ -55,7 +55,7 @@ test('Codex credentials are read without returning unrelated tokens', async (t) 
 });
 
 test('full-reset request uses the local Codex sign-in and returns sanitized details', async (t) => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'codexu-reset-fetch-'));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-usage-reset-fetch-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const authPath = path.join(directory, 'auth.json');
   fs.writeFileSync(authPath, JSON.stringify({ tokens: { access_token: 'access-secret', account_id: 'account-1' } }));
