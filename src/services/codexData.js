@@ -13,9 +13,7 @@ try {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const ACTIVE_WINDOW_MS = 15 * 60 * 1000;
 const USAGE_READ_CONCURRENCY = 4;
-const PRICING_TABLE_VERSION = 'codex-usage-2026-07';
 const usageFileCache = new Map();
 
 function codexHome() {
@@ -85,30 +83,9 @@ function allRows(db, sql) {
 }
 
 function normalizeThread(row) {
-  const updatedMs = normalizeEpoch(row.updated_at_ms) || normalizeEpoch(row.updated_at);
-  const createdMs = normalizeEpoch(row.created_at_ms) || normalizeEpoch(row.created_at);
-  const archivedMs = normalizeEpoch(row.archived_at);
-  const title =
-    asString(row.title).trim() ||
-    asString(row.first_user_message).trim() ||
-    asString(row.preview).trim() ||
-    'Untitled Codex thread';
-
   return {
-    id: asString(row.id),
-    title,
-    preview: asString(row.preview || row.first_user_message),
-    tokens: safeNumber(row.tokens_used),
-    updatedAt: updatedMs ? new Date(updatedMs).toISOString() : null,
-    updatedMs,
-    createdAt: createdMs ? new Date(createdMs).toISOString() : null,
-    archivedAt: archivedMs ? new Date(archivedMs).toISOString() : null,
-    archivedMs,
     model: asString(row.model || row.model_provider, 'unknown'),
-    cwd: asString(row.cwd),
-    workspace: shortWorkspaceName(asString(row.cwd)),
-    rolloutPath: resolveCodexPath(asString(row.rollout_path)),
-    archived: Boolean(row.archived)
+    rolloutPath: resolveCodexPath(asString(row.rollout_path))
   };
 }
 
@@ -119,18 +96,9 @@ function resolveCodexPath(value) {
   return path.join(codexHome(), value);
 }
 
-function shortWorkspaceName(cwd) {
-  if (!cwd) return 'unknown';
-  const normalized = cwd.replace(/[\\/]+$/, '');
-  return path.basename(normalized) || normalized;
-}
-
-function readLocalUsage(messages = [], options = {}) {
+function readLocalUsage(options = {}) {
   const dbPath = options.dbPath || findStateDb();
-  if (!dbPath) {
-    messages.push('未找到 Codex state_5.sqlite。');
-    return null;
-  }
+  if (!dbPath) return null;
 
   let db;
   try {
@@ -139,41 +107,16 @@ function readLocalUsage(messages = [], options = {}) {
       db,
       `
       SELECT
-        id,
         rollout_path,
-        created_at,
-        updated_at,
-        created_at_ms,
-        updated_at_ms,
         model_provider,
-        cwd,
-        title,
-        tokens_used,
-        archived,
-        archived_at,
-        first_user_message,
-        preview,
         model
       FROM threads
-      ORDER BY COALESCE(NULLIF(updated_at_ms, 0), updated_at * 1000) DESC
     `
     );
 
     const threads = rows.map(normalizeThread);
-    const lifetimeTokens = threads.reduce((sum, thread) => sum + thread.tokens, 0);
-    return {
-      dbPath,
-      threads,
-      threadsCount: threads.length,
-      lifetimeTokens,
-      todayTokens: null,
-      sevenDayTokens: null,
-      monthTokens: null,
-      dailyBuckets: [],
-      recentThreads: threads.slice(0, 8)
-    };
-  } catch (error) {
-    messages.push(`SQLite 读取失败：${error.message}`);
+    return { threads };
+  } catch {
     return null;
   } finally {
     if (db) db.close();
@@ -401,8 +344,7 @@ function createUsageFileState(filePath, sourceModel) {
     mtimeMs: 0,
     previous: null,
     lifetime: usageBucket(),
-    daily: new Map(),
-    tokenEvents: 0
+    daily: new Map()
   };
 }
 
@@ -412,7 +354,6 @@ function addUsageToFileState(state, eventMs, delta) {
   const dayStart = startOfLocalDay(new Date(eventMs));
   if (!state.daily.has(dayStart)) state.daily.set(dayStart, usageBucket());
   addPricedUsage(state.daily.get(dayStart), delta, price);
-  state.tokenEvents += 1;
 }
 
 function processUsageLine(lineBuffer, state, fallbackMs, requireValidJson = false) {
@@ -578,7 +519,7 @@ function walkFiles(root, limit = Number.POSITIVE_INFINITY) {
   return result;
 }
 
-async function readDetailedUsage(localUsage, messages = [], options = {}) {
+async function readDetailedUsage(localUsage, options = {}) {
   const now = options.now ? new Date(options.now) : new Date();
   const windows = {
     todayStart: startOfLocalDay(now),
@@ -600,123 +541,19 @@ async function readDetailedUsage(localUsage, messages = [], options = {}) {
   });
   const states = updates.map((item) => item.state).filter(Boolean);
   const accumulator = aggregateUsageStates(states, windows);
-  const eventCount = states.reduce((sum, state) => sum + state.tokenEvents, 0);
   const cacheHits = updates.filter((item) => item.cacheHit).length;
   const bytesRead = updates.reduce((sum, item) => sum + item.bytesRead, 0);
-  const unpricedTokens = accumulator.lifetime.unpricedTokens;
-
-  if (!eventCount) {
-    messages.push('未找到可解析的 token_count 事件，详细拆分将为空。');
-  }
-  if (unpricedTokens > 0) {
-    messages.push(`有 ${unpricedTokens} token 未识别模型，已统计 token 但未计入 API 等效价值。`);
-  }
 
   return {
     ...accumulator,
-    sourcesScanned: sources.length,
-    sourcesDiscovered: sources.length,
-    tokenEvents: eventCount,
     cacheHits,
     filesParsed: sources.length - cacheHits,
-    bytesRead,
-    partial: false,
-    pricingTableVersion: PRICING_TABLE_VERSION
+    bytesRead
   };
 }
 
 function resetUsageFileCache() {
   usageFileCache.clear();
-}
-
-function parseSimpleToml(text) {
-  const result = {};
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('[')) continue;
-    const match = trimmed.match(/^([A-Za-z0-9_.-]+)\s*=\s*(.*)$/);
-    if (!match) continue;
-    let value = match[2].trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    result[match[1]] = value;
-  }
-  return result;
-}
-
-function scheduleSummary(raw) {
-  const value = asString(raw).toUpperCase();
-  if (!value) return 'scheduled';
-  if (value.includes('FREQ=DAILY')) return 'daily';
-  if (value.includes('FREQ=WEEKLY')) return 'weekly';
-  if (value.includes('FREQ=MONTHLY')) return 'monthly';
-  if (value.includes('FREQ=HOURLY')) return 'hourly';
-  return raw;
-}
-
-function readAutomationTasks() {
-  const dir = path.join(codexHome(), 'automations');
-  if (!pathExists(dir)) return [];
-  return walkFiles(dir)
-    .filter((file) => /\.toml$/i.test(file))
-    .map((file) => ({ file, mtimeMs: fs.statSync(file).mtimeMs }))
-    .sort((left, right) => right.mtimeMs - left.mtimeMs)
-    .slice(0, 20)
-    .map(({ file, mtimeMs }) => {
-      const raw = fs.readFileSync(file, 'utf8');
-      const parsed = parseSimpleToml(raw);
-      return {
-        id: file,
-        title: parsed.title || parsed.name || parsed.objective || parsed.prompt || path.basename(file, '.toml'),
-        detail: scheduleSummary(parsed.rrule || parsed.schedule || parsed.cron),
-        path: file,
-        updatedAt: new Date(mtimeMs).toISOString(),
-        kind: 'scheduled'
-      };
-    });
-}
-
-function makeTaskBoard(localUsage) {
-  const now = Date.now();
-  const todayStart = startOfLocalDay(new Date());
-  const activeCutoff = now - ACTIVE_WINDOW_MS;
-  const active = [];
-  const pending = [];
-  const done = [];
-
-  for (const thread of localUsage ? localUsage.threads : []) {
-    if (thread.archived) {
-      const doneMs = thread.archivedMs || thread.updatedMs;
-      if (doneMs >= todayStart) done.push(taskFromThread(thread, 'done'));
-      continue;
-    }
-    if (thread.updatedMs < todayStart) continue;
-    if (thread.updatedMs >= activeCutoff) active.push(taskFromThread(thread, 'active'));
-    else pending.push(taskFromThread(thread, 'pending'));
-  }
-
-  const scheduled = readAutomationTasks();
-  return {
-    refreshedAt: new Date().toISOString(),
-    columns: [
-      { id: 'active', title: '进行中', titleEn: 'Active', count: active.length, items: active },
-      { id: 'pending', title: '待处理', titleEn: 'Pending', count: pending.length, items: pending },
-      { id: 'scheduled', title: '定时', titleEn: 'Scheduled', count: scheduled.length, items: scheduled },
-      { id: 'done', title: '完成', titleEn: 'Done', count: done.length, items: done }
-    ]
-  };
-}
-
-function taskFromThread(thread, kind) {
-  return {
-    id: thread.id,
-    title: thread.title,
-    detail: thread.workspace,
-    updatedAt: thread.updatedAt,
-    path: thread.cwd,
-    kind
-  };
 }
 
 function parseRateWindow(value) {
@@ -740,11 +577,7 @@ function parseRateWindow(value) {
 function parseAccount(result) {
   if (!result || typeof result !== 'object') return null;
   const account = result.account || result;
-  return {
-    type: asString(account.type || account.authType || account.auth_type || 'unknown'),
-    planType: account.planType || account.plan_type || account.plan || null,
-    emailPresent: Boolean(account.email || account.emailPresent || account.email_present)
-  };
+  return { planType: account.planType || account.plan_type || account.plan || null };
 }
 
 function parseRateLimits(result) {
@@ -764,14 +597,6 @@ function parseFullResetCredits(result) {
   const availableCount = Number(rawCount);
   if (!Number.isFinite(availableCount) || availableCount < 0) return null;
   return { availableCount: Math.floor(availableCount) };
-}
-
-function parseCloudUsage(result) {
-  const root = result && (result.usage || result.summary || result);
-  return safeNumber(
-    root && (root.totalTokens ?? root.total_tokens ?? root.lifetimeTokens ?? root.lifetime_tokens ?? root.tokens),
-    0
-  );
 }
 
 function codexCommandCandidates() {
@@ -818,19 +643,17 @@ function bundledCodexCandidates() {
 
 function tryAppServerCommand(command, timeoutMs) {
   return new Promise((resolve) => {
-    const messages = [];
     const snapshot = {
       account: null,
       primary: null,
       secondary: null,
-      fullResetCredits: null,
-      cloudLifetimeTokens: 0
+      fullResetCredits: null
     };
     let settled = false;
     let buffer = '';
     let completed = 0;
 
-    const finish = (ok, reason) => {
+    const finish = () => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -839,7 +662,10 @@ function tryAppServerCommand(command, timeoutMs) {
       } catch {
         // Already exited.
       }
-      resolve({ ok, reason, snapshot, messages, command });
+      resolve({
+        ok: Boolean(snapshot.account || snapshot.primary || snapshot.secondary),
+        snapshot
+      });
     };
 
     let child;
@@ -849,18 +675,15 @@ function tryAppServerCommand(command, timeoutMs) {
         windowsHide: true,
         shell: false
       });
-    } catch (error) {
-      resolve({ ok: false, reason: error.message, snapshot, messages, command });
+    } catch {
+      resolve({ ok: false, snapshot });
       return;
     }
 
-    const timer = setTimeout(() => finish(completed >= 2, completed >= 2 ? null : 'app-server 响应超时'), timeoutMs);
+    const timer = setTimeout(finish, timeoutMs);
 
-    child.on('error', (error) => finish(false, error.message));
-    child.stderr.on('data', (chunk) => {
-      const text = chunk.toString('utf8').trim();
-      if (text) messages.push(text);
-    });
+    child.on('error', finish);
+    child.stderr.resume();
     child.stdout.on('data', (chunk) => {
       buffer += chunk.toString('utf8');
       const parts = buffer.split(/\r?\n/);
@@ -889,7 +712,6 @@ function tryAppServerCommand(command, timeoutMs) {
       send({ method: 'initialized', params: {} });
       send({ id: 2, method: 'account/read', params: { refreshToken: false } });
       send({ id: 3, method: 'account/rateLimits/read', params: {} });
-      send({ id: 4, method: 'account/usage/read', params: {} });
     }, 80);
 
     function parseAppServerLine(line) {
@@ -898,12 +720,12 @@ function tryAppServerCommand(command, timeoutMs) {
       try {
         message = JSON.parse(line);
       } catch {
-        messages.push(`app-server 非 JSON 输出：${line.slice(0, 120)}`);
         return;
       }
       if (message.error) {
-        messages.push(`app-server ${message.id || ''}: ${message.error.message || JSON.stringify(message.error)}`);
-        completed += 1;
+        if (message.id === 2 || message.id === 3) completed += 1;
+        if (completed >= 2) finish();
+        return;
       }
       if (!message.result) return;
       if (message.id === 2) {
@@ -917,47 +739,29 @@ function tryAppServerCommand(command, timeoutMs) {
         snapshot.fullResetCredits = limits.fullResetCredits;
         completed += 1;
       }
-      if (message.id === 4) {
-        snapshot.cloudLifetimeTokens = parseCloudUsage(message.result);
-        completed += 1;
-      }
-      if (completed >= 3) finish(true, null);
+      if (completed >= 2) finish();
     }
   });
 }
 
-async function readAppServer(messages) {
+async function readAppServer() {
   for (const command of codexCommandCandidates()) {
     const result = await tryAppServerCommand(command, 12000);
     if (result.ok && (result.snapshot.primary || result.snapshot.secondary || result.snapshot.account)) {
-      messages.push(`app-server 来源：${command}`);
       return result.snapshot;
     }
-    const reason = result.reason || result.messages.join('; ') || '无可用响应';
-    messages.push(`app-server 不可用（${command}）：${reason}`);
   }
   return {
     account: null,
     primary: null,
     secondary: null,
-    fullResetCredits: null,
-    cloudLifetimeTokens: 0
+    fullResetCredits: null
   };
 }
 
 async function loadSnapshot() {
-  const messages = [];
-  const local = readLocalUsage(messages);
-  const [detailedUsage, appServer] = await Promise.all([readDetailedUsage(local, messages), readAppServer(messages)]);
-
-  if (local) {
-    local.detailedUsage = detailedUsage;
-    local.todayTokens = detailedUsage.today.tokens.totalTokens;
-    local.sevenDayTokens = detailedUsage.sevenDay.tokens.totalTokens;
-    local.monthTokens = detailedUsage.month.tokens.totalTokens;
-  }
-  const taskBoard = makeTaskBoard(local);
-  if (local) delete local.threads;
+  const local = readLocalUsage();
+  const [detailedUsage, appServer] = await Promise.all([readDetailedUsage(local), readAppServer()]);
 
   return {
     refreshedAt: new Date().toISOString(),
@@ -965,10 +769,7 @@ async function loadSnapshot() {
     primary: appServer.primary,
     secondary: appServer.secondary,
     fullResetCredits: appServer.fullResetCredits,
-    cloudLifetimeTokens: appServer.cloudLifetimeTokens,
-    local,
-    taskBoard,
-    diagnostics: messages.map((message, index) => ({ id: String(index + 1), message }))
+    local: { detailedUsage }
   };
 }
 
@@ -977,16 +778,10 @@ module.exports = {
   readLocalUsage,
   readDetailedUsage,
   resetUsageFileCache,
-  makeTaskBoard,
   modelTokenPrice,
-  estimatedCostUSD,
   deltaBreakdown,
   isUsableDelta,
   extractBreakdown,
-  parseRateWindow,
   parseRateLimits,
-  parseFullResetCredits,
-  parseSimpleToml,
-  startOfLocalDay,
-  startOfLocalMonth
+  parseFullResetCredits
 };

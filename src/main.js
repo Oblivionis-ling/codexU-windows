@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, nativeImage, net, shell } = require('electron');
+const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, nativeImage, net } = require('electron');
 const { Worker } = require('worker_threads');
 const path = require('path');
 const fs = require('fs');
@@ -27,7 +27,6 @@ let fullResetDetailsCache = null;
 let fullResetDetailsFetchedAt = 0;
 let fullResetDetailsPromise = null;
 let preferences = {
-  theme: 'dark',
   alwaysOnTop: true,
   subscriptionPriceUSD: null,
   widgetVersion: 4
@@ -46,19 +45,10 @@ function hasUsableRateLimit(limit) {
   );
 }
 
-function rateLimitWindowLabel(limit, fallback) {
-  const minutes = Number(limit && limit.windowDurationMins);
-  if (minutes > 0 && minutes % 1440 === 0) return `${minutes / 1440}d`;
-  if (minutes > 0 && minutes % 60 === 0) return `${minutes / 60}h`;
-  if (minutes > 0) return `${minutes}min`;
-  return fallback;
-}
-
 function mergeWithCachedLimits(nextSnapshot, previousSnapshot) {
   if (!previousSnapshot) return nextSnapshot;
 
   const merged = { ...nextSnapshot };
-  const preserved = [];
   const keys = ['primary', 'secondary'];
   const hasCurrentLimits = keys.some((key) => hasUsableRateLimit(merged[key]));
   const previousAgeMs = Date.now() - new Date(previousSnapshot.refreshedAt).getTime();
@@ -71,10 +61,9 @@ function mergeWithCachedLimits(nextSnapshot, previousSnapshot) {
     Number.isFinite(previousAgeMs) && previousAgeMs >= 0 && previousAgeMs <= RATE_LIMIT_CACHE_GRACE_MS;
 
   if (mayUseCachedLimits) {
-    for (const [index, key] of keys.entries()) {
+    for (const key of keys) {
       if (hasUsableRateLimit(previousSnapshot[key])) {
         merged[key] = previousSnapshot[key];
-        preserved.push(rateLimitWindowLabel(previousSnapshot[key], `窗口 ${index + 1}`));
       }
     }
   }
@@ -85,21 +74,6 @@ function mergeWithCachedLimits(nextSnapshot, previousSnapshot) {
 
   if (!merged.fullResetCredits && previousSnapshot.fullResetCredits && mayUseCachedSnapshot) {
     merged.fullResetCredits = previousSnapshot.fullResetCredits;
-    preserved.push('Full reset 次数');
-  }
-
-  if (!Number(merged.cloudLifetimeTokens) && Number(previousSnapshot.cloudLifetimeTokens)) {
-    merged.cloudLifetimeTokens = previousSnapshot.cloudLifetimeTokens;
-  }
-
-  if (preserved.length) {
-    merged.diagnostics = [
-      ...(Array.isArray(merged.diagnostics) ? merged.diagnostics : []),
-      {
-        id: 'cached-rate-limits',
-        message: `app-server 本次未返回 ${preserved.join('/')} 额度，已沿用上一次有效数据（${previousSnapshot.refreshedAt}）。`
-      }
-    ];
   }
 
   return merged;
@@ -120,14 +94,15 @@ function loadPreferences() {
     const storedWidgetVersion = Number(stored.widgetVersion || 0);
     const needsCompactWidgetMigration = storedWidgetVersion < 3;
     const needsCurrentWidgetMigration = storedWidgetVersion < 4;
-    preferences = { ...preferences, ...stored };
-    delete preferences.language;
-    preferences.subscriptionPriceUSD = normalizeSubscriptionPrice(preferences.subscriptionPriceUSD);
+    preferences = {
+      alwaysOnTop: typeof stored.alwaysOnTop === 'boolean' ? stored.alwaysOnTop : preferences.alwaysOnTop,
+      subscriptionPriceUSD: normalizeSubscriptionPrice(stored.subscriptionPriceUSD),
+      widgetVersion: 4
+    };
     if (needsCompactWidgetMigration) {
       preferences.alwaysOnTop = true;
     }
-    if (needsCurrentWidgetMigration) {
-      preferences.widgetVersion = 4;
+    if (needsCurrentWidgetMigration || Object.hasOwn(stored, 'theme') || Object.hasOwn(stored, 'language')) {
       savePreferences();
     }
   } catch {
@@ -381,21 +356,10 @@ function loadSnapshotInWorker() {
   });
 }
 
-function withDiagnostic(snapshot, diagnostic) {
-  const diagnostics = (Array.isArray(snapshot.diagnostics) ? snapshot.diagnostics : []).filter(
-    (item) => item && item.id !== diagnostic.id
-  );
-  diagnostics.push(diagnostic);
-  return {
-    ...snapshot,
-    diagnostics: diagnostics.slice(-50)
-  };
-}
-
 function refreshFullResetDetails() {
   const cacheAge = Date.now() - fullResetDetailsFetchedAt;
   if (fullResetDetailsCache && cacheAge >= 0 && cacheAge < FULL_RESET_DETAILS_REFRESH_MS) {
-    return Promise.resolve({ details: fullResetDetailsCache, error: null });
+    return Promise.resolve(fullResetDetailsCache);
   }
   if (fullResetDetailsPromise) return fullResetDetailsPromise;
 
@@ -405,16 +369,13 @@ function refreshFullResetDetails() {
     .then((details) => {
       fullResetDetailsCache = details;
       fullResetDetailsFetchedAt = Date.now();
-      return { details, error: null };
+      return details;
     })
-    .catch((error) => {
+    .catch(() => {
       const failedCacheAge = Date.now() - fullResetDetailsFetchedAt;
       const mayUseCache =
         fullResetDetailsCache && failedCacheAge >= 0 && failedCacheAge <= FULL_RESET_DETAILS_CACHE_GRACE_MS;
-      return {
-        details: mayUseCache ? fullResetDetailsCache : null,
-        error
-      };
+      return mayUseCache ? fullResetDetailsCache : null;
     })
     .finally(() => {
       if (fullResetDetailsPromise === operation) fullResetDetailsPromise = null;
@@ -423,21 +384,8 @@ function refreshFullResetDetails() {
   return operation;
 }
 
-function attachFullResetDetails(snapshot, result) {
-  let next = snapshot;
-  if (result.details) {
-    next = {
-      ...next,
-      fullResetCredits: result.details
-    };
-  }
-  if (result.error) {
-    next = withDiagnostic(next, {
-      id: 'full-reset-details-unavailable',
-      message: `Full reset 到期详情暂时不可用，已保留次数或最近缓存：${result.error.message}`
-    });
-  }
-  return next;
+function attachFullResetDetails(snapshot, details) {
+  return details ? { ...snapshot, fullResetCredits: details } : snapshot;
 }
 
 function publishSnapshot(snapshot, sequence) {
@@ -459,18 +407,7 @@ async function performSnapshotRefresh(sequence) {
   } catch (error) {
     if (!previousSnapshot) throw error;
     const fullResetDetails = await fullResetDetailsOperation;
-    return publishSnapshot(
-      attachResetHistory(
-        attachFullResetDetails(
-          withDiagnostic(previousSnapshot, {
-            id: 'cached-snapshot-after-error',
-            message: `本次刷新失败，已保留上一次有效快照：${error.message}`
-          }),
-          fullResetDetails
-        )
-      ),
-      sequence
-    );
+    return publishSnapshot(attachResetHistory(attachFullResetDetails(previousSnapshot, fullResetDetails)), sequence);
   }
 
   const fullResetDetails = await fullResetDetailsOperation;
@@ -508,49 +445,6 @@ function assertTrustedIpcEvent(event) {
   }
 }
 
-function isPathInside(childPath, parentPath) {
-  const relative = path.relative(parentPath, childPath);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-}
-
-function currentAllowedOpenPaths() {
-  const paths = new Set();
-  const columns = cachedSnapshot && cachedSnapshot.taskBoard && cachedSnapshot.taskBoard.columns;
-  for (const column of Array.isArray(columns) ? columns : []) {
-    for (const item of Array.isArray(column.items) ? column.items : []) {
-      if (typeof item.path === 'string' && item.path.trim()) {
-        paths.add(path.resolve(item.path).toLowerCase());
-      }
-    }
-  }
-  return paths;
-}
-
-async function openSafePath(filePath) {
-  if (typeof filePath !== 'string' || !filePath.trim()) {
-    throw new TypeError('A non-empty path is required.');
-  }
-
-  const resolved = path.resolve(filePath);
-  if (!currentAllowedOpenPaths().has(resolved.toLowerCase())) {
-    throw new Error('The requested path is not present in the current Codex snapshot.');
-  }
-  const stat = await fs.promises.stat(resolved);
-  if (stat.isDirectory()) {
-    const errorMessage = await shell.openPath(resolved);
-    if (errorMessage) throw new Error(errorMessage);
-    return { opened: true, kind: 'directory' };
-  }
-
-  const automationsRoot = path.join(app.getPath('home'), '.codex', 'automations');
-  if (stat.isFile() && path.extname(resolved).toLowerCase() === '.toml' && isPathInside(resolved, automationsRoot)) {
-    shell.showItemInFolder(resolved);
-    return { opened: true, kind: 'automation' };
-  }
-
-  throw new Error('Only workspace directories and Codex automation TOML files can be opened.');
-}
-
 function registerIpc() {
   ipcMain.handle('snapshot:get', (event) => {
     assertTrustedIpcEvent(event);
@@ -564,47 +458,11 @@ function registerIpc() {
     assertTrustedIpcEvent(event);
     return { ...preferences };
   });
-  ipcMain.handle('preferences:set', (event, next) => {
-    assertTrustedIpcEvent(event);
-    if (!next || typeof next !== 'object' || Array.isArray(next)) {
-      throw new TypeError('Preferences must be an object.');
-    }
-    const validated = {};
-    if (['dark', 'light', 'system'].includes(next.theme)) validated.theme = next.theme;
-    if (typeof next.alwaysOnTop === 'boolean') validated.alwaysOnTop = next.alwaysOnTop;
-    if (Object.hasOwn(next, 'subscriptionPriceUSD')) {
-      validated.subscriptionPriceUSD = normalizeSubscriptionPrice(next.subscriptionPriceUSD);
-    }
-    preferences = {
-      ...preferences,
-      ...validated
-    };
-    savePreferences();
-    applyAlwaysOnTop();
-    updateTrayMenu();
-    broadcastPreferences();
-    return preferences;
-  });
-  ipcMain.handle('window:action', (event, action) => {
+  ipcMain.handle('window:hide', (event) => {
     assertTrustedIpcEvent(event);
     if (!mainWindow) return false;
-    if (!['minimize', 'hide', 'toggleAlwaysOnTop'].includes(action)) {
-      throw new Error(`Unsupported window action: ${action}`);
-    }
-    if (action === 'minimize') mainWindow.minimize();
-    if (action === 'hide') mainWindow.hide();
-    if (action === 'toggleAlwaysOnTop') {
-      preferences.alwaysOnTop = !preferences.alwaysOnTop;
-      applyAlwaysOnTop();
-      savePreferences();
-      updateTrayMenu();
-      broadcastPreferences();
-    }
+    mainWindow.hide();
     return true;
-  });
-  ipcMain.handle('shell:openPath', async (event, filePath) => {
-    assertTrustedIpcEvent(event);
-    return openSafePath(filePath);
   });
 }
 

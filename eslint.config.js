@@ -26,10 +26,7 @@ module.exports = [
       eqeqeq: ['error', 'always'],
       'no-undef': 'error',
       'no-unreachable': 'error',
-      'no-unused-vars': [
-        'error',
-        { argsIgnorePattern: '^_', varsIgnorePattern: '^(accountText|renderRecent|renderDiagnostics)$' }
-      ]
+      'no-unused-vars': ['error', { argsIgnorePattern: '^_' }]
     }
   },
   {
