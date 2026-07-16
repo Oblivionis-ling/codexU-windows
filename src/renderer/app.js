@@ -1,7 +1,6 @@
 const state = {
   snapshot: null,
   preferences: {
-    theme: 'dark',
     alwaysOnTop: true,
     subscriptionPriceUSD: null
   },
@@ -248,7 +247,6 @@ function renderValueCard(snapshot, preferences) {
 
 function render() {
   const root = document.getElementById('app');
-  document.body.dataset.theme = 'dark';
 
   if (state.loading) {
     root.innerHTML = renderLoading();
@@ -293,7 +291,7 @@ function render() {
   `;
 
   document.getElementById('refreshButton')?.addEventListener('click', refresh);
-  document.getElementById('hideButton')?.addEventListener('click', () => window.codexUsage.windowAction('hide'));
+  document.getElementById('hideButton')?.addEventListener('click', () => window.codexUsage.hideWindow());
 }
 
 async function refresh() {
