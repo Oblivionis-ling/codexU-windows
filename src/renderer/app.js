@@ -11,69 +11,6 @@ const state = {
 
 let rendererRefreshPromise = null;
 
-const labels = {
-  subtitle: 'Codex 用量、额度和今日任务',
-  shortcut: 'Ctrl + Alt + U 显示/隐藏',
-  refresh: '刷新',
-  top: '置顶',
-  untop: '取消置顶',
-  unavailable: '不可用',
-  remaining: '剩余',
-  resets: '重置',
-  account: '账号',
-  today: '今日',
-  seven: '近 7 天',
-  lifetime: '累计',
-  localUsage: '本地用量',
-  details: 'Token 拆分与 API 等效价值',
-  input: '未缓存',
-  cached: '缓存',
-  output: '输出',
-  reasoning: '推理',
-  tasks: '今日任务看板',
-  recent: '最近线程',
-  env: '环境检查',
-  scanned: '扫描',
-  events: '事件',
-  refreshed: '刷新',
-  noData: '暂无',
-  threads: '线程',
-  wool: '羊毛进度',
-  referenceCap: '满额',
-  pro: 'PRO'
-};
-
-function t(key) {
-  return labels[key] || key;
-}
-
-function icon(name, className = 'ui-icon') {
-  const icons = {
-    app: '<rect x="4.2" y="5.2" width="15.6" height="13.2" rx="3.4"/><path d="m7.7 10.2 2.1 1.8-2.1 1.8"/><path d="M11.3 13.8h3.4"/><path d="M16.5 8.1a3.8 3.8 0 0 1 1.4 3.7"/><path d="M15.2 9.6a2 2 0 0 1 .7 1.9"/><path class="star-fill" d="m16.8 3.4.6 1.2 1.3.2-1 .9.3 1.3-1.2-.7-1.2.7.3-1.3-1-.9 1.3-.2.6-1.2Z"/>',
-    pin: '<path d="m14.2 3.8 6 6-2.9.8-3.8 3.8.4 4.1-2 2-3.7-6.1-5.8-3.5 2-2 4 .3 3.9-3.9.9-2.8Z"/>',
-    refresh:
-      '<path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M18 9a6.7 6.7 0 0 0-11.1-2.6L4 9m16 6-2.9 2.6A6.7 6.7 0 0 1 6 15"/>',
-    minimize: '<path d="M5 12h14"/>',
-    close: '<path d="m6.5 6.5 11 11M17.5 6.5l-11 11"/>',
-    today:
-      '<circle cx="12" cy="12" r="3.8"/><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/>',
-    week: '<path d="M4.8 5.5h14.4v14H4.8Z"/><path d="M4.8 9.2h14.4"/><path d="M8.3 4v3M15.7 4v3"/><path d="M8.2 13h2M13.8 13h2M8.2 16.3h2"/>',
-    total: '<path d="M16.8 5H7.2l4.8 7-4.8 7h9.6"/><path d="M8.8 12h5.8"/>',
-    wool: '<path d="M4.5 17.5h15"/><path d="M6.2 16V9.5"/><path d="M11.8 16V6.2"/><path d="M17.4 16v-4.8"/><path d="m6.2 9.5 5.6-3.3 5.6 5"/>',
-    input: '<path d="M4 12h11"/><path d="m11 8 4 4-4 4"/><path d="M19 5v14"/>',
-    cached: '<path d="M7 7.2c1.3-1.4 3.1-2.2 5-2.2a7 7 0 1 1-6.5 9.6"/><path d="M7 4.5v2.7h2.7"/><path d="M10 12h4"/>',
-    output: '<path d="M20 12H9"/><path d="m13 8-4 4 4 4"/><path d="M5 5v14"/>',
-    active: '<circle cx="12" cy="12" r="7"/><path d="m12 8 2.6 4-2.6 4-2.6-4Z"/>',
-    pending: '<circle cx="12" cy="12" r="7"/><path d="M12 8v4l2.5 2"/>',
-    scheduled:
-      '<rect x="5" y="5" width="14" height="14" rx="3"/><path d="M8 3.5v3M16 3.5v3M5 9h14"/><path d="M12 12v3l2 1"/>',
-    done: '<circle cx="12" cy="12" r="7"/><path d="m8.8 12.2 2.1 2.1 4.5-4.8"/>',
-    sun: '<circle cx="12" cy="12" r="3.2"/><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/>',
-    moon: '<path d="M18.4 14.2A6.8 6.8 0 0 1 9.8 5.6a7 7 0 1 0 8.6 8.6Z"/>'
-  };
-  return `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.total}</svg>`;
-}
-
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -83,92 +20,37 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
+function icon(name) {
+  const icons = {
+    refresh:
+      '<path d="M19.2 7.2V3.8m0 0h-3.4m3.4 0-2.6 2.6a7.3 7.3 0 1 0 1.2 9.9"/><path d="M18 12a6 6 0 0 1-.2 1.5"/>',
+    close: '<path d="m7.2 7.2 9.6 9.6m0-9.6-9.6 9.6"/>',
+    reset: '<path d="M12 5.2a6.8 6.8 0 1 1-6.4 4.5"/><path d="M4.8 5.6v4.2H9"/><path d="M12 8.2v4.2l2.8 1.7"/>',
+    value: '<path d="M5 16.5 9.4 12l3 3 6.6-7"/><path d="M15.5 8H19v3.5"/>',
+    pin: '<path d="m14.5 4.5 5 5-2.5.7-3.2 3.2.3 3.5-1.7 1.7-3.1-5-4.8-2.9L6.2 9l3.4.3 3.2-3.2.7-2.5Z"/>'
+  };
+  return `<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.value}</svg>`;
+}
+
 function clamp(value, min = 0, max = 100) {
   const number = Number(value);
   if (!Number.isFinite(number)) return min;
   return Math.max(min, Math.min(max, number));
 }
 
+function timestamp(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  return numeric > 100_000_000_000 ? numeric : numeric * 1000;
+}
+
 function hasRateLimit(limit) {
   return Boolean(limit && Number.isFinite(Number(limit.remainingPercent)));
 }
 
-function gaugePercent(limit) {
-  return hasRateLimit(limit) ? clamp(limit.remainingPercent) : 0;
-}
-
-function gaugePercentLabel(limit) {
-  return hasRateLimit(limit) ? String(Math.round(clamp(limit.remainingPercent))) + '%' : '--';
-}
-
-function formatTokens(value) {
-  const number = Number(value || 0);
-  if (number >= 1_000_000_000) return `${(number / 1_000_000_000).toFixed(2)}B`;
-  if (number >= 10_000_000) return `${(number / 1_000_000).toFixed(1)}M`;
-  if (number >= 1_000_000) return `${(number / 1_000_000).toFixed(2)}M`;
-  if (number >= 10_000) return `${(number / 1_000).toFixed(1)}K`;
-  return new Intl.NumberFormat('zh-CN').format(number);
-}
-
-function formatCost(value) {
-  return `$${Number(value || 0).toFixed(2)}`;
-}
-
-function formatUsageCost(usage) {
-  const total = Number(usage?.tokens?.totalTokens || 0);
-  const priced = Number(usage?.pricedTokens || 0);
-  const unpriced = Number(usage?.unpricedTokens || 0);
-  if (total > 0 && priced <= 0) return '--';
-  const prefix = unpriced > 0 ? '≥' : '';
-  return `${prefix}${formatCost(usage?.estimatedCostUSD)}`;
-}
-
-function formatCompactCost(value) {
-  const number = Number(value || 0);
-  if (number >= 1000) return `$${(number / 1000).toFixed(1)}K`;
-  return formatCost(number);
-}
-
-function formatTime(value) {
-  if (!value) return '--';
-  const numeric = Number(value);
-  const normalized =
-    Number.isFinite(numeric) && String(value).trim() !== ''
-      ? numeric > 100_000_000_000
-        ? numeric
-        : numeric * 1000
-      : value;
-  const date = new Date(normalized);
-  if (Number.isNaN(date.getTime())) return '--';
-  return new Intl.DateTimeFormat('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit'
-  }).format(date);
-}
-
-function relativeTime(value) {
-  if (!value) return '--';
-  const delta = Date.now() - new Date(value).getTime();
-  if (!Number.isFinite(delta)) return '--';
-  const minutes = Math.max(0, Math.floor(delta / 60000));
-  if (minutes < 1) return '刚刚';
-  if (minutes < 60) return `${minutes} 分钟前`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} 小时前`;
-  const days = Math.floor(hours / 24);
-  return `${days} 天前`;
-}
-
-function durationLabel(minutes) {
-  const value = Number(minutes || 0);
-  if (value > 0 && value % 1440 === 0) return `${value / 1440}d`;
-  if (value > 0 && value % 60 === 0) return `${value / 60}h`;
-  return value > 0 ? `${value} min` : '--';
-}
-
-function quotaWindows(primary, secondary) {
+function quotaWindows(snapshot) {
   const unique = new Map();
-  for (const limit of [primary, secondary]) {
+  for (const limit of [snapshot?.primary, snapshot?.secondary]) {
     if (!hasRateLimit(limit)) continue;
     const duration = Number(limit.windowDurationMins || 0);
     const key = duration > 0 ? `duration:${duration}` : `window:${unique.size}`;
@@ -181,298 +63,173 @@ function quotaWindows(primary, secondary) {
   );
 }
 
-function quotaWindowLabel(limit, index) {
-  const duration = durationLabel(limit?.windowDurationMins);
-  return duration === '--' ? `窗口 ${index + 1}` : duration;
+function durationLabel(minutes) {
+  const value = Number(minutes || 0);
+  if (value > 0 && value % 1440 === 0) return `${value / 1440}d`;
+  if (value > 0 && value % 60 === 0) return `${value / 60}h`;
+  return value > 0 ? `${value}m` : '额度';
 }
 
-function tokensFromUsage(usage, fallback = 0) {
-  return Number(usage?.tokens?.totalTokens || fallback || 0);
+function formatCountdown(value) {
+  const resetAt = timestamp(value);
+  if (!resetAt) return '--';
+  const remaining = resetAt - Date.now();
+  if (remaining <= 0) return '正在重置';
+  const totalMinutes = Math.max(1, Math.ceil(remaining / 60_000));
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return `${days}天 ${hours}小时`;
+  if (hours > 0) return `${hours}小时 ${minutes}分`;
+  return `${minutes}分钟`;
 }
 
-function tokenParts(usage) {
-  const tokens = usage?.tokens || {};
-  const cached = Math.max(Number(tokens.cachedInputTokens || 0), 0);
-  const input = Math.max(Number(tokens.inputTokens || 0) - cached, 0);
-  const output = Math.max(Number(tokens.outputTokens || 0), 0);
-  const reasoning = Math.max(Number(tokens.reasoningOutputTokens || 0), 0);
-  const total = Math.max(input + cached + output, Number(tokens.totalTokens || 0), 1);
-  return { input, cached, output, reasoning, total };
+function formatDate(value, includeTime = false) {
+  const dateValue = timestamp(value);
+  if (!dateValue) return '--';
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return '--';
+  const options = {
+    month: 'short',
+    day: 'numeric'
+  };
+  if (date.getFullYear() !== new Date().getFullYear()) options.year = 'numeric';
+  if (includeTime) {
+    options.hour = '2-digit';
+    options.minute = '2-digit';
+  }
+  return new Intl.DateTimeFormat('zh-CN', options).format(date);
 }
 
-function widthPercent(value, total) {
-  if (!Number.isFinite(value) || !Number.isFinite(total) || total <= 0) return 0;
-  return clamp((value / total) * 100);
+function formatRefreshTime(value) {
+  const numeric = timestamp(value);
+  if (!numeric) return '--';
+  return new Intl.DateTimeFormat('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  }).format(new Date(numeric));
 }
 
-function renderQuotaGauge(primary, secondary) {
-  const windows = quotaWindows(primary, secondary);
-  const outer = windows[0] || null;
-  const inner = windows[1] || null;
-  const outerPercent = gaugePercent(outer);
-  const innerPercent = gaugePercent(inner);
-  const gaugeClass = windows.length === 1 ? 'single-gauge' : windows.length === 0 ? 'empty-gauge' : '';
+function money(value) {
+  const number = Number(value || 0);
+  const digits = number >= 100 ? 0 : 2;
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits
+  }).format(number);
+}
+
+function planDetails(planType) {
+  const normalized = String(planType || '')
+    .trim()
+    .toLowerCase();
+  if (normalized.includes('prolite') || normalized.includes('plus')) return { label: 'Plus', price: 20 };
+  if (normalized === 'pro' || normalized.includes('pro200')) return { label: 'Pro', price: 200 };
+  if (normalized.includes('business') || normalized.includes('team')) return { label: 'Business', price: 30 };
+  return { label: normalized ? String(planType) : '套餐', price: 20 };
+}
+
+function inferredLastReset(limit) {
+  const resetAt = timestamp(limit?.resetsAt);
+  const duration = Number(limit?.windowDurationMins || 0) * 60_000;
+  return resetAt && duration ? resetAt - duration : null;
+}
+
+function renderLoading() {
   return `
-    <section class="quota-card glass-panel">
-      <div class="dual-gauge ${gaugeClass}" style="--outer:${outerPercent}; --inner:${innerPercent}">
-        <svg class="gauge-rings" viewBox="0 0 240 240" aria-hidden="true">
-          <circle class="gauge-track gauge-track-outer" cx="120" cy="120" r="92" pathLength="100"></circle>
-          <circle class="gauge-progress gauge-progress-outer" cx="120" cy="120" r="92" pathLength="100" stroke-dasharray="${outerPercent} 100"></circle>
-          ${
-            inner
-              ? `
-            <circle class="gauge-track gauge-track-inner" cx="120" cy="120" r="61" pathLength="100"></circle>
-            <circle class="gauge-progress gauge-progress-inner" cx="120" cy="120" r="61" pathLength="100" stroke-dasharray="${innerPercent} 100"></circle>
-          `
-              : ''
-          }
+    <section class="widget-frame loading-frame" aria-label="正在加载 CodexU">
+      <div class="skeleton skeleton-title"></div>
+      <div class="loading-grid">
+        <div class="skeleton skeleton-ring"></div>
+        <div class="loading-stack">
+          <div class="skeleton skeleton-card"></div>
+          <div class="skeleton skeleton-card"></div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderError(message) {
+  return `
+    <section class="widget-frame error-frame">
+      <div>
+        <strong>暂时无法读取额度</strong>
+        <span>${escapeHtml(message)}</span>
+      </div>
+      <button id="retryButton" class="retry-button" type="button">重试</button>
+    </section>
+  `;
+}
+
+function renderQuota(limit) {
+  const percent = hasRateLimit(limit) ? Math.round(clamp(limit.remainingPercent)) : 0;
+  const label = durationLabel(limit?.windowDurationMins);
+  return `
+    <section class="quota-panel" aria-label="${escapeHtml(label)} 额度剩余 ${percent}%">
+      <div class="quota-ring">
+        <svg viewBox="0 0 128 128" role="img" aria-label="额度剩余 ${percent}%">
+          <circle class="ring-track" cx="64" cy="64" r="52" pathLength="100"></circle>
+          <circle class="ring-progress" cx="64" cy="64" r="52" pathLength="100" style="stroke-dasharray:${percent} 100"></circle>
         </svg>
-        <div class="gauge-center">
-          ${
-            windows.length
-              ? windows
-                  .map(
-                    (limit, index) => `
-            <div><span>${quotaWindowLabel(limit, index)}</span><strong>${gaugePercentLabel(limit)}</strong></div>
-          `
-                  )
-                  .join('')
-              : `<div><span>${t('account')}</span><strong>--</strong></div>`
-          }
-        </div>
-      </div>
-      <div class="quota-legend">
-        ${
-          windows.length
-            ? windows
-                .map(
-                  (limit, index) => `
-          <div class="legend-row ${index === 0 ? 'outer' : 'inner'}">
-            <span><i></i>${quotaWindowLabel(limit, index)} ${t('resets')}</span>
-            <strong>${formatTime(limit.resetsAt)}</strong>
-          </div>
-        `
-                )
-                .join('')
-            : `<div class="legend-row"><span>${t('unavailable')}</span></div>`
-        }
-        <div class="quota-foot">
-          ${windows.length ? `${windows.length} 个额度窗口` : t('unavailable')}
+        <div class="ring-copy">
+          <span>${escapeHtml(label)}</span>
+          <strong>${hasRateLimit(limit) ? `${percent}%` : '--'}</strong>
+          <small>可用额度</small>
         </div>
       </div>
     </section>
   `;
 }
 
-function renderSplitRows(parts) {
+function renderResetCard(limit, resetHistory) {
+  const resetAt = timestamp(limit?.resetsAt);
+  const lastResetAt = timestamp(resetHistory?.lastResetAt) || inferredLastReset(limit);
+  const count = Math.max(0, Number(resetHistory?.count || 0));
   return `
-    <div class="split-list">
-      <div><span class="dot input"></span>${t('input')}</div><strong>${formatTokens(parts.input)}</strong>
-      <div><span class="dot cached"></span>${t('cached')}</div><strong>${formatTokens(parts.cached)}</strong>
-      <div><span class="dot output"></span>${t('output')}</div><strong>${formatTokens(parts.output)}</strong>
-    </div>
-  `;
-}
-
-function renderTokenCard(title, iconName, usage, fallbackTokens = 0) {
-  const parts = tokenParts(usage);
-  const total = tokensFromUsage(usage, fallbackTokens);
-  return `
-    <section class="token-card glass-panel">
-      <div class="token-head">
-        <div class="token-title">${icon(iconName)}<span>${title}</span></div>
-        <strong class="cost-value" title="${Number(usage?.unpricedTokens || 0) > 0 ? '部分 token 因模型未知未估价' : t('details')}">${formatUsageCost(usage)}</strong>
+    <section class="metric-card reset-card">
+      <div class="metric-heading">
+        <span>${icon('reset')}重置</span>
+        <b>${count} 次</b>
       </div>
-      <div class="token-value">${formatTokens(total)}</div>
-      <div class="stacked-bar" title="${t('details')}">
-        <span class="bar-input" style="width:${widthPercent(parts.input, parts.total)}%"></span>
-        <span class="bar-cached" style="width:${widthPercent(parts.cached, parts.total)}%"></span>
-        <span class="bar-output" style="width:${widthPercent(parts.output, parts.total)}%"></span>
-      </div>
-      ${renderSplitRows(parts)}
-    </section>
-  `;
-}
-
-function renderWoolProgress(detailed = {}) {
-  const todayCost = Number(detailed.today?.estimatedCostUSD || 0);
-  const weekCost = Number(detailed.sevenDay?.estimatedCostUSD || 0);
-  const monthCost = Number(detailed.month?.estimatedCostUSD || 0);
-  const visualCap = Math.max(1000, todayCost, weekCost, monthCost);
-  const referenceCap = Math.max(46500, todayCost, weekCost, monthCost);
-  const progress = widthPercent(todayCost, visualCap);
-  const tiers = [
-    { label: 'Plus', position: 7 },
-    { label: 'Pro100', position: 24 },
-    { label: 'Pro200', position: 56 }
-  ];
-  return `
-    <section class="wool-card glass-panel">
-      <div class="section-title compact">
-        <span>${icon('wool')}${t('wool')}</span>
-        <strong>${formatUsageCost(detailed.today)} <em>/ ${formatCompactCost(referenceCap)}</em></strong>
-      </div>
-      <div class="wool-track">
-        <span class="wool-fill" style="width:${progress}%"></span>
-        ${tiers
-          .map(
-            (tier) => `
-          <i class="wool-marker" style="left:${tier.position}%">
-            <b></b><small>${tier.label}</small>
-          </i>
-        `
-          )
-          .join('')}
-      </div>
-      <div class="wool-meta">
-        <span class="wool-legend"><i class="dot input"></i>Plus <i class="dot cached"></i>Pro100 <i class="dot pro200"></i>Pro200</span>
-        <span>${t('referenceCap')} ${formatCompactCost(referenceCap)}</span>
+      <strong class="countdown" data-reset-at="${resetAt || ''}">${formatCountdown(resetAt)}</strong>
+      <div class="metric-meta">
+        <span>最近 ${formatDate(lastResetAt)}</span>
+        <span>下次 ${formatDate(resetAt, true)}</span>
       </div>
     </section>
   `;
 }
 
-function renderHero(snapshot) {
-  const local = snapshot.local || {};
-  const detailed = local.detailedUsage || {};
+function renderValueCard(snapshot) {
+  const detailed = snapshot?.local?.detailedUsage || {};
+  const month = detailed.month || {};
+  const earned = Number(month.estimatedCostUSD || 0);
+  const unpriced = Number(month.unpricedTokens || 0);
+  const plan = planDetails(snapshot?.account?.planType);
+  const rawProgress = plan.price > 0 ? (earned / plan.price) * 100 : 0;
+  const progress = clamp(rawProgress);
+  const multiple = plan.price > 0 ? earned / plan.price : 0;
   return `
-    <section class="hero-grid">
-      ${renderQuotaGauge(snapshot.primary, snapshot.secondary)}
-      <div class="hero-right">
-        <div class="token-grid">
-          ${renderTokenCard(t('today'), 'today', detailed.today, local.todayTokens)}
-          ${renderTokenCard(t('seven'), 'week', detailed.sevenDay, local.sevenDayTokens)}
-          ${renderTokenCard(t('lifetime'), 'total', detailed.lifetime, snapshot.cloudLifetimeTokens || local.lifetimeTokens)}
-        </div>
-        ${renderWoolProgress(detailed)}
+    <section class="metric-card value-card">
+      <div class="metric-heading">
+        <span>${icon('value')}薅羊毛进度</span>
+        <b>${multiple >= 1 ? `${multiple.toFixed(multiple >= 10 ? 0 : 1)}×` : `${Math.round(rawProgress)}%`}</b>
       </div>
-    </section>
-  `;
-}
-
-function statusIcon(column) {
-  const id = column.id || column.kind || '';
-  if (id.includes('active')) return 'active';
-  if (id.includes('pending')) return 'pending';
-  if (id.includes('scheduled')) return 'scheduled';
-  if (id.includes('done')) return 'done';
-  if (column.title === '进行中') return 'active';
-  if (column.title === '待处理') return 'pending';
-  if (column.title === '定时') return 'scheduled';
-  if (column.title === '完成') return 'done';
-  return 'pending';
-}
-
-function normalizeTaskColumns(board) {
-  const sourceColumns = board?.columns || [];
-  const specs = [
-    { status: 'active', title: '进行中' },
-    { status: 'pending', title: '待处理' },
-    { status: 'scheduled', title: '定时' },
-    { status: 'done', title: '完成' }
-  ];
-  return specs.map((spec) => {
-    const found = sourceColumns.find((column) => statusIcon(column) === spec.status);
-    return found
-      ? { ...found, title: found.title || spec.title }
-      : { id: spec.status, title: spec.title, count: 0, items: [] };
-  });
-}
-
-function taskCode(item) {
-  const raw = String(item.id || item.title || 'TASK')
-    .replace(/[^a-z0-9]/gi, '')
-    .slice(0, 8);
-  return raw ? raw.toUpperCase() : 'TASK';
-}
-
-function statusBadge(status) {
-  if (status === 'scheduled') return 'Cron';
-  if (status === 'done') return 'Done';
-  if (status === 'active') return 'Medium';
-  return 'Medium';
-}
-
-function renderTaskItem(item, status = 'pending') {
-  const title = escapeHtml(item.title);
-  const detail = escapeHtml(item.detail || '');
-  const avatar = escapeHtml((item.workspace || item.title || 'N').trim().slice(0, 1).toUpperCase());
-  return `
-    <button class="task-item task-item-${status}" data-open-path="${escapeHtml(item.path || '')}">
-      <div class="task-top"><strong>${taskCode(item)}</strong><time>${relativeTime(item.updatedAt)}</time></div>
-      <span class="task-title">${title}</span>
-      <small>${detail}</small>
-      <div class="task-foot"><em>${statusBadge(status)}</em><b>${avatar}</b></div>
-    </button>
-  `;
-}
-
-function renderTasks(board) {
-  const columns = normalizeTaskColumns(board);
-  return `
-    <section class="board-panel glass-panel">
-      <div class="section-title board-title">
-        <span>${t('tasks')}</span>
-        <small>${columns.reduce((sum, column) => sum + Number(column.count || 0), 0)} 事项 · ${formatTime(board?.refreshedAt)}</small>
+      <div class="value-line">
+        <strong>${unpriced > 0 ? '≥' : ''}${money(earned)}</strong>
+        <span>/ ${money(plan.price)}</span>
       </div>
-      <div class="task-board">
-        ${columns
-          .map((column) => {
-            const status = statusIcon(column);
-            return `
-            <div class="task-column ${status}">
-              <div class="column-head">
-                <span class="column-label">${icon(status)}${escapeHtml(column.title)} <strong>${column.count || 0}</strong></span>
-              </div>
-              <div class="task-list">
-                ${column.items?.length ? column.items.map((item) => renderTaskItem(item, status)).join('') : `<div class="task-empty">${t('noData')}</div>`}
-              </div>
-            </div>
-          `;
-          })
-          .join('')}
+      <div class="value-track" role="progressbar" aria-label="薅羊毛进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progress)}">
+        <i style="width:${progress}%"></i>
       </div>
-    </section>
-  `;
-}
-
-function renderRecent(threads = []) {
-  return `
-    <section class="recent-panel glass-panel">
-      <div class="section-title">
-        <span>${t('recent')}</span>
-        <small>${threads.length}</small>
+      <div class="metric-meta">
+        <span>${escapeHtml(plan.label)} 套餐</span>
+        <span>本月估算</span>
       </div>
-      <div class="recent-list">
-        ${
-          threads.length
-            ? threads
-                .map(
-                  (thread) => `
-          <button class="recent-item" data-open-path="${escapeHtml(thread.cwd || '')}">
-            <span>${escapeHtml(thread.title)}</span>
-            <small>${escapeHtml(thread.workspace)} · ${formatTokens(thread.tokens)} · ${relativeTime(thread.updatedAt)}</small>
-          </button>
-        `
-                )
-                .join('')
-            : `<div class="task-empty">${t('noData')}</div>`
-        }
-      </div>
-    </section>
-  `;
-}
-
-function renderDiagnostics(items = []) {
-  return `
-    <section class="diagnostics glass-panel">
-      <div class="section-title">
-        <span>${t('env')}</span>
-        <small>${items.length}</small>
-      </div>
-      <ul>
-        ${items.map((item) => `<li>${escapeHtml(item.message)}</li>`).join('')}
-      </ul>
     </section>
   `;
 }
@@ -482,59 +239,54 @@ function render() {
   document.body.dataset.theme = 'dark';
 
   if (state.loading) {
-    root.innerHTML = '<div class="loading">正在加载 CodexU...</div>';
+    root.innerHTML = renderLoading();
     return;
   }
 
-  if (state.error) {
-    root.innerHTML = `<div class="loading error">${escapeHtml(state.error)}</div>`;
+  if (state.error && !state.snapshot) {
+    root.innerHTML = renderError(state.error);
+    document.getElementById('retryButton')?.addEventListener('click', refresh);
     return;
   }
 
   const snapshot = state.snapshot || {};
-  const local = snapshot.local || {};
-  const detailed = local.detailedUsage || {};
-  const accountText = snapshot.account
-    ? `${snapshot.account.type}${snapshot.account.planType ? ' · ' + snapshot.account.planType : ''}`
-    : t('unavailable');
-
+  const windows = quotaWindows(snapshot);
+  const primaryLimit = windows[0] || null;
   root.innerHTML = `
-    <section class="window-frame">
+    <section class="widget-frame${state.refreshing ? ' is-refreshing' : ''}">
       <header class="titlebar">
-        <div class="drag-region">
-          <div class="brand-row">
-            <span class="app-mark">${icon('app', 'app-mark-icon')}</span>
-            <div class="app-title">codexU</div>
+        <div class="brand-block">
+          <span class="brand-orb" aria-hidden="true"></span>
+          <div>
+            <strong>codexU</strong>
+            <span>${state.preferences.alwaysOnTop ? `${icon('pin')} 已置顶` : '桌面组件'}</span>
           </div>
         </div>
-        <div class="window-actions">
-          <button id="refreshButton" class="window-control refresh-control${state.refreshing ? ' is-refreshing' : ''}" title="${t('refresh')}" ${state.refreshing ? 'disabled' : ''}>${icon('refresh')}</button>
-          <button id="hideButton" class="window-control close" title="关闭">${icon('close')}</button>
+        <div class="title-actions">
+          <span class="live-status"><i></i>实时</span>
+          <span class="shortcut-hint">Ctrl U</span>
+          <button id="refreshButton" class="icon-button refresh-button" type="button" aria-label="立即刷新" title="立即刷新" ${state.refreshing ? 'disabled' : ''}>${icon('refresh')}</button>
+          <button id="hideButton" class="icon-button hide-button" type="button" aria-label="隐藏窗口" title="隐藏窗口">${icon('close')}</button>
         </div>
       </header>
-
-      <main class="content-scroll">
-        ${renderHero(snapshot)}
-        ${renderTasks(snapshot.taskBoard)}
+      <main class="widget-content">
+        ${renderQuota(primaryLimit)}
+        <div class="metrics-stack">
+          ${renderResetCard(primaryLimit, snapshot.resetHistory)}
+          ${renderValueCard(snapshot)}
+        </div>
       </main>
-      <footer class="footer-status">
-        <span>${t('refreshed')} ${formatTime(snapshot.refreshedAt)}</span>
-        <span>扫描 ${Number(detailed.sourcesScanned || 0)} · 缓存 ${Number(detailed.cacheHits || 0)} · ${escapeHtml(detailed.pricingTableVersion || '未估价')}</span>
-      </footer>
+      <div class="refresh-stamp" title="最近刷新时间">${formatRefreshTime(snapshot.refreshedAt)}</div>
     </section>
   `;
 
-  bindActions();
-}
-
-function bindActions() {
   document.getElementById('refreshButton')?.addEventListener('click', refresh);
   document.getElementById('hideButton')?.addEventListener('click', () => window.codexU.windowAction('hide'));
-  for (const button of document.querySelectorAll('[data-open-path]')) {
-    button.addEventListener('click', () => {
-      const filePath = button.getAttribute('data-open-path');
-      if (filePath) window.codexU.openPath(filePath);
-    });
+}
+
+function updateCountdown() {
+  for (const element of document.querySelectorAll('[data-reset-at]')) {
+    element.textContent = formatCountdown(element.getAttribute('data-reset-at'));
   }
 }
 
@@ -574,10 +326,13 @@ async function init() {
     state.loading = false;
     render();
   }
-  setInterval(() => {
-    if (document.visibilityState === 'visible') refresh();
-  }, 60_000);
 }
+
+setInterval(() => {
+  if (document.visibilityState === 'visible') refresh();
+}, 15_000);
+
+setInterval(updateCountdown, 1000);
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') refresh();
@@ -586,6 +341,7 @@ document.addEventListener('visibilitychange', () => {
 window.codexU.onSnapshotUpdated((snapshot) => {
   state.snapshot = snapshot;
   state.loading = false;
+  state.error = null;
   render();
 });
 
