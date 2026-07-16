@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
 const { loadSnapshot } = require('./services/codexData');
+const { updateResetHistory } = require('./services/resetHistory');
 
 const RATE_LIMIT_CACHE_GRACE_MS = 5 * 60 * 1000;
 
@@ -17,9 +18,11 @@ const workerRequests = new Map();
 let refreshPromise = null;
 let refreshSequence = 0;
 let appliedRefreshSequence = 0;
+let resetHistoryState = null;
 let preferences = {
   theme: 'dark',
-  alwaysOnTop: true
+  alwaysOnTop: true,
+  widgetVersion: 3
 };
 
 function hasUsableRateLimit(limit) {
@@ -117,11 +120,22 @@ function preferencesPath() {
   return path.join(app.getPath('userData'), 'preferences.json');
 }
 
+function resetHistoryPath() {
+  return path.join(app.getPath('userData'), 'reset-history.json');
+}
+
 function loadPreferences() {
   try {
     const raw = fs.readFileSync(preferencesPath(), 'utf8');
-    preferences = { ...preferences, ...JSON.parse(raw) };
+    const stored = JSON.parse(raw);
+    const needsCompactWidgetMigration = Number(stored.widgetVersion || 0) < 3;
+    preferences = { ...preferences, ...stored };
     delete preferences.language;
+    if (needsCompactWidgetMigration) {
+      preferences.alwaysOnTop = true;
+      preferences.widgetVersion = 3;
+      savePreferences();
+    }
   } catch {
     // Defaults are acceptable on first run.
   }
@@ -136,6 +150,29 @@ function savePreferences() {
   }
 }
 
+function loadResetHistory() {
+  try {
+    resetHistoryState = JSON.parse(fs.readFileSync(resetHistoryPath(), 'utf8'));
+  } catch {
+    resetHistoryState = null;
+  }
+}
+
+function attachResetHistory(snapshot) {
+  const result = updateResetHistory(resetHistoryState, [snapshot.primary, snapshot.secondary]);
+  const changed = JSON.stringify(result.state) !== JSON.stringify(resetHistoryState);
+  resetHistoryState = result.state;
+  if (changed) {
+    try {
+      fs.mkdirSync(app.getPath('userData'), { recursive: true });
+      fs.writeFileSync(resetHistoryPath(), JSON.stringify(resetHistoryState, null, 2));
+    } catch (error) {
+      console.warn('Failed to save reset history:', error.message);
+    }
+  }
+  return { ...snapshot, resetHistory: result.summary };
+}
+
 function createTrayImage() {
   const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'codexu-icon.ico'));
   if (!icon.isEmpty()) return icon.resize({ width: 16, height: 16 });
@@ -146,29 +183,26 @@ function createTrayImage() {
 
 function createWindow() {
   const { workArea } = require('electron').screen.getPrimaryDisplay();
-  const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-  const maxWidth = Math.max(320, workArea.width - 32);
-  const maxHeight = Math.max(320, workArea.height - 32);
-  let defaultHeight = Math.min(1040, maxHeight);
-  let defaultWidth = Math.round(defaultHeight * 1.16);
-  if (defaultWidth > maxWidth) {
-    defaultWidth = maxWidth;
-    defaultHeight = Math.round(defaultWidth / 1.16);
-  }
-  const maxX = workArea.x + workArea.width - defaultWidth - 16;
-  const maxY = workArea.y + workArea.height - defaultHeight - 16;
-  const defaultX = clamp(workArea.x + 24, workArea.x + 16, maxX);
-  const defaultY = clamp(workArea.y + 24, workArea.y + 16, maxY);
+  const defaultWidth = Math.min(420, workArea.width - 24);
+  const defaultHeight = Math.min(220, workArea.height - 24);
+  const defaultX = workArea.x + workArea.width - defaultWidth - 20;
+  const defaultY = workArea.y + 20;
   mainWindow = new BrowserWindow({
     width: defaultWidth,
     height: defaultHeight,
     x: defaultX,
     y: defaultY,
-    minWidth: Math.min(1120, defaultWidth),
-    minHeight: Math.min(820, defaultHeight),
+    minWidth: defaultWidth,
+    minHeight: defaultHeight,
+    maxWidth: defaultWidth,
+    maxHeight: defaultHeight,
     frame: false,
     transparent: true,
-    resizable: true,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
     hasShadow: false,
     show: false,
     alwaysOnTop: preferences.alwaysOnTop,
@@ -223,7 +257,7 @@ function updateTrayMenu() {
   if (!tray) return;
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: '打开 / 隐藏 (Ctrl+Alt+U)', click: toggleWindow },
+      { label: '打开 / 隐藏 (Ctrl+U)', click: toggleWindow },
       { label: '刷新数据', click: async () => refreshSnapshot(true) },
       {
         label: preferences.alwaysOnTop ? '取消置顶' : '窗口置顶',
@@ -345,7 +379,7 @@ async function performSnapshotRefresh(sequence) {
     );
   }
 
-  return publishSnapshot(mergeWithCachedLimits(nextSnapshot, previousSnapshot), sequence);
+  return publishSnapshot(attachResetHistory(mergeWithCachedLimits(nextSnapshot, previousSnapshot)), sequence);
 }
 
 async function refreshSnapshot(force = false) {
@@ -477,10 +511,13 @@ if (!process.argv.includes('--smoke')) {
   app.whenReady().then(async () => {
     app.setAppUserModelId('com.codexu.windows');
     loadPreferences();
+    loadResetHistory();
     registerIpc();
     createWindow();
     createTray();
-    globalShortcut.register('Control+Alt+U', toggleWindow);
+    if (!globalShortcut.register('Control+U', toggleWindow)) {
+      console.warn('Failed to register the Ctrl+U global shortcut.');
+    }
   });
 }
 
