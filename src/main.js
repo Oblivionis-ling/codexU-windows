@@ -1,12 +1,15 @@
-const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, nativeImage, shell } = require('electron');
+const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, nativeImage, net, shell } = require('electron');
 const { Worker } = require('worker_threads');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
 const { loadSnapshot } = require('./services/codexData');
+const { fetchFullResetCredits } = require('./services/fullResetCredits');
 const { updateFullResetHistory } = require('./services/resetHistory');
 
 const RATE_LIMIT_CACHE_GRACE_MS = 5 * 60 * 1000;
+const FULL_RESET_DETAILS_REFRESH_MS = 60 * 1000;
+const FULL_RESET_DETAILS_CACHE_GRACE_MS = 5 * 60 * 1000;
 
 let mainWindow;
 let tray;
@@ -19,6 +22,9 @@ let refreshPromise = null;
 let refreshSequence = 0;
 let appliedRefreshSequence = 0;
 let resetHistoryState = null;
+let fullResetDetailsCache = null;
+let fullResetDetailsFetchedAt = 0;
+let fullResetDetailsPromise = null;
 let preferences = {
   theme: 'dark',
   alwaysOnTop: true,
@@ -99,7 +105,22 @@ function mergeWithCachedLimits(nextSnapshot, previousSnapshot) {
 }
 
 if (process.argv.includes('--smoke')) {
-  loadSnapshot()
+  app
+    .whenReady()
+    .then(async () => {
+      const snapshot = await loadSnapshot();
+      try {
+        snapshot.fullResetCredits = await fetchFullResetCredits({
+          fetchImpl: (url, options) => net.fetch(url, options)
+        });
+      } catch (error) {
+        snapshot.diagnostics.push({
+          id: 'full-reset-details-unavailable',
+          message: `Full reset 到期详情暂时不可用：${error.message}`
+        });
+      }
+      return snapshot;
+    })
     .then((snapshot) => {
       const report = JSON.stringify(
         {
@@ -422,6 +443,54 @@ function withDiagnostic(snapshot, diagnostic) {
   };
 }
 
+function refreshFullResetDetails() {
+  const cacheAge = Date.now() - fullResetDetailsFetchedAt;
+  if (fullResetDetailsCache && cacheAge >= 0 && cacheAge < FULL_RESET_DETAILS_REFRESH_MS) {
+    return Promise.resolve({ details: fullResetDetailsCache, error: null });
+  }
+  if (fullResetDetailsPromise) return fullResetDetailsPromise;
+
+  const operation = fetchFullResetCredits({
+    fetchImpl: (url, options) => net.fetch(url, options)
+  })
+    .then((details) => {
+      fullResetDetailsCache = details;
+      fullResetDetailsFetchedAt = Date.now();
+      return { details, error: null };
+    })
+    .catch((error) => {
+      const failedCacheAge = Date.now() - fullResetDetailsFetchedAt;
+      const mayUseCache =
+        fullResetDetailsCache && failedCacheAge >= 0 && failedCacheAge <= FULL_RESET_DETAILS_CACHE_GRACE_MS;
+      return {
+        details: mayUseCache ? fullResetDetailsCache : null,
+        error
+      };
+    })
+    .finally(() => {
+      if (fullResetDetailsPromise === operation) fullResetDetailsPromise = null;
+    });
+  fullResetDetailsPromise = operation;
+  return operation;
+}
+
+function attachFullResetDetails(snapshot, result) {
+  let next = snapshot;
+  if (result.details) {
+    next = {
+      ...next,
+      fullResetCredits: result.details
+    };
+  }
+  if (result.error) {
+    next = withDiagnostic(next, {
+      id: 'full-reset-details-unavailable',
+      message: `Full reset 到期详情暂时不可用，已保留次数或最近缓存：${result.error.message}`
+    });
+  }
+  return next;
+}
+
 function publishSnapshot(snapshot, sequence) {
   if (sequence < appliedRefreshSequence) return cachedSnapshot;
   appliedRefreshSequence = sequence;
@@ -434,21 +503,32 @@ function publishSnapshot(snapshot, sequence) {
 
 async function performSnapshotRefresh(sequence) {
   const previousSnapshot = cachedSnapshot;
+  const fullResetDetailsOperation = refreshFullResetDetails();
   let nextSnapshot;
   try {
     nextSnapshot = await loadSnapshotInWorker();
   } catch (error) {
     if (!previousSnapshot) throw error;
+    const fullResetDetails = await fullResetDetailsOperation;
     return publishSnapshot(
-      withDiagnostic(previousSnapshot, {
-        id: 'cached-snapshot-after-error',
-        message: `本次刷新失败，已保留上一次有效快照：${error.message}`
-      }),
+      attachResetHistory(
+        attachFullResetDetails(
+          withDiagnostic(previousSnapshot, {
+            id: 'cached-snapshot-after-error',
+            message: `本次刷新失败，已保留上一次有效快照：${error.message}`
+          }),
+          fullResetDetails
+        )
+      ),
       sequence
     );
   }
 
-  return publishSnapshot(attachResetHistory(mergeWithCachedLimits(nextSnapshot, previousSnapshot)), sequence);
+  const fullResetDetails = await fullResetDetailsOperation;
+  return publishSnapshot(
+    attachResetHistory(attachFullResetDetails(mergeWithCachedLimits(nextSnapshot, previousSnapshot), fullResetDetails)),
+    sequence
+  );
 }
 
 async function refreshSnapshot(force = false) {

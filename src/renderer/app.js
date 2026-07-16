@@ -40,6 +40,10 @@ function clamp(value, min = 0, max = 100) {
 }
 
 function timestamp(value) {
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return null;
   return numeric > 100_000_000_000 ? numeric : numeric * 1000;
@@ -182,10 +186,20 @@ function renderQuota(limit) {
   `;
 }
 
-function renderResetCard(fullResetHistory) {
+function renderResetCard(fullResetHistory, fullResetCredits) {
   const rawCount = fullResetHistory?.availableCount;
   const count = rawCount === null || rawCount === undefined ? null : Math.max(0, Math.floor(Number(rawCount)));
   const lastDecreasedAt = timestamp(fullResetHistory?.lastDecreasedAt);
+  const nearestExpiresAt = timestamp(fullResetCredits?.nearestExpiresAt);
+  const hasExpiryDetails = Boolean(fullResetCredits?.detailsAvailable);
+  const expiryLabel = nearestExpiresAt
+    ? `最近到期 ${formatDate(nearestExpiresAt)}`
+    : hasExpiryDetails
+      ? '暂无到期日'
+      : '有效期暂不可用';
+  const expiryTitle = nearestExpiresAt
+    ? `最近一项 Full reset 将于 ${formatDate(nearestExpiresAt, true)} 到期`
+    : 'Full reset 到期明细暂不可用，当前仍显示 app-server 返回的次数';
   return `
     <section class="metric-card reset-card">
       <div class="metric-heading">
@@ -193,9 +207,9 @@ function renderResetCard(fullResetHistory) {
         <b>${count === null || !Number.isFinite(count) ? '--' : `${count} 次`}</b>
       </div>
       <strong class="countdown">${count === null || !Number.isFinite(count) ? '暂不可用' : `${count} 次可用`}</strong>
-      <div class="metric-meta" title="OpenAI 未提供 full reset 的过期日期；这里只记录可用次数最近一次减少的时间">
+      <div class="metric-meta" title="${escapeHtml(expiryTitle)}">
         <span>最近减少 ${formatDate(lastDecreasedAt)}</span>
-        <span>有效期未提供</span>
+        <span>${escapeHtml(expiryLabel)}</span>
       </div>
     </section>
   `;
@@ -270,7 +284,7 @@ function render() {
       <main class="widget-content">
         ${renderQuota(primaryLimit)}
         <div class="metrics-stack">
-          ${renderResetCard(snapshot.fullResetHistory)}
+          ${renderResetCard(snapshot.fullResetHistory, snapshot.fullResetCredits)}
           ${renderValueCard(snapshot, state.preferences)}
         </div>
       </main>
