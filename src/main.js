@@ -1,12 +1,22 @@
 const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, nativeImage, shell } = require('electron');
+const { Worker } = require('worker_threads');
 const path = require('path');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 const { loadSnapshot } = require('./services/codexData');
+
+const RATE_LIMIT_CACHE_GRACE_MS = 5 * 60 * 1000;
 
 let mainWindow;
 let tray;
 let cachedSnapshot = null;
 let isQuitting = false;
+let snapshotWorker = null;
+let nextWorkerRequestId = 1;
+const workerRequests = new Map();
+let refreshPromise = null;
+let refreshSequence = 0;
+let appliedRefreshSequence = 0;
 let preferences = {
   theme: 'dark',
   alwaysOnTop: true
@@ -14,10 +24,16 @@ let preferences = {
 
 function hasUsableRateLimit(limit) {
   return Boolean(
-    limit &&
-    Number.isFinite(Number(limit.remainingPercent)) &&
-    Number.isFinite(Number(limit.usedPercent))
+    limit && Number.isFinite(Number(limit.remainingPercent)) && Number.isFinite(Number(limit.usedPercent))
   );
+}
+
+function rateLimitWindowLabel(limit, fallback) {
+  const minutes = Number(limit && limit.windowDurationMins);
+  if (minutes > 0 && minutes % 1440 === 0) return `${minutes / 1440}d`;
+  if (minutes > 0 && minutes % 60 === 0) return `${minutes / 60}h`;
+  if (minutes > 0) return `${minutes}min`;
+  return fallback;
 }
 
 function mergeWithCachedLimits(nextSnapshot, previousSnapshot) {
@@ -25,11 +41,21 @@ function mergeWithCachedLimits(nextSnapshot, previousSnapshot) {
 
   const merged = { ...nextSnapshot };
   const preserved = [];
+  const keys = ['primary', 'secondary'];
+  const hasCurrentLimits = keys.some((key) => hasUsableRateLimit(merged[key]));
+  const previousAgeMs = Date.now() - new Date(previousSnapshot.refreshedAt).getTime();
+  const mayUseCachedLimits =
+    !hasCurrentLimits &&
+    Number.isFinite(previousAgeMs) &&
+    previousAgeMs >= 0 &&
+    previousAgeMs <= RATE_LIMIT_CACHE_GRACE_MS;
 
-  for (const key of ['primary', 'secondary']) {
-    if (!hasUsableRateLimit(merged[key]) && hasUsableRateLimit(previousSnapshot[key])) {
-      merged[key] = previousSnapshot[key];
-      preserved.push(key === 'primary' ? '5h' : '7d');
+  if (mayUseCachedLimits) {
+    for (const [index, key] of keys.entries()) {
+      if (hasUsableRateLimit(previousSnapshot[key])) {
+        merged[key] = previousSnapshot[key];
+        preserved.push(rateLimitWindowLabel(previousSnapshot[key], `窗口 ${index + 1}`));
+      }
     }
   }
 
@@ -57,17 +83,23 @@ function mergeWithCachedLimits(nextSnapshot, previousSnapshot) {
 if (process.argv.includes('--smoke')) {
   loadSnapshot()
     .then((snapshot) => {
-      const report = JSON.stringify({
-        refreshedAt: snapshot.refreshedAt,
-        hasPrimaryLimit: Boolean(snapshot.primary),
-        hasSecondaryLimit: Boolean(snapshot.secondary),
-        localThreads: snapshot.local && snapshot.local.threadsCount,
-        todayTokens: snapshot.local && snapshot.local.todayTokens,
-        sevenDayTokens: snapshot.local && snapshot.local.sevenDayTokens,
-        lifetimeTokens: snapshot.local && snapshot.local.lifetimeTokens,
-        detailEvents: snapshot.local && snapshot.local.detailedUsage && snapshot.local.detailedUsage.tokenEvents,
-        diagnostics: snapshot.diagnostics.map((item) => item.message)
-      }, null, 2);
+      const report = JSON.stringify(
+        {
+          refreshedAt: snapshot.refreshedAt,
+          hasPrimaryLimit: Boolean(snapshot.primary),
+          hasSecondaryLimit: Boolean(snapshot.secondary),
+          primary: snapshot.primary,
+          secondary: snapshot.secondary,
+          localThreads: snapshot.local && snapshot.local.threadsCount,
+          todayTokens: snapshot.local && snapshot.local.todayTokens,
+          sevenDayTokens: snapshot.local && snapshot.local.sevenDayTokens,
+          lifetimeTokens: snapshot.local && snapshot.local.lifetimeTokens,
+          detailEvents: snapshot.local && snapshot.local.detailedUsage && snapshot.local.detailedUsage.tokenEvents,
+          diagnostics: snapshot.diagnostics.map((item) => item.message)
+        },
+        null,
+        2
+      );
       if (process.env.CODEXU_SMOKE_OUT) {
         fs.writeFileSync(process.env.CODEXU_SMOKE_OUT, report);
       } else {
@@ -107,7 +139,9 @@ function savePreferences() {
 function createTrayImage() {
   const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'codexu-icon.ico'));
   if (!icon.isEmpty()) return icon.resize({ width: 16, height: 16 });
-  return nativeImage.createFromPath(path.join(__dirname, 'assets', 'codexu-icon.png')).resize({ width: 16, height: 16 });
+  return nativeImage
+    .createFromPath(path.join(__dirname, 'assets', 'codexu-icon.png'))
+    .resize({ width: 16, height: 16 });
 }
 
 function createWindow() {
@@ -145,11 +179,19 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: true,
+      webSecurity: true,
+      devTools: !app.isPackaged
     }
   });
 
-  mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  const rendererEntry = path.join(__dirname, 'renderer', 'index.html');
+  const rendererUrl = pathToFileURL(rendererEntry).toString();
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  mainWindow.webContents.on('will-navigate', (event, nextUrl) => {
+    if (nextUrl !== rendererUrl) event.preventDefault();
+  });
+  mainWindow.loadFile(rendererEntry);
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
@@ -179,28 +221,30 @@ function toggleWindow() {
 
 function updateTrayMenu() {
   if (!tray) return;
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '打开 / 隐藏 (Ctrl+Alt+U)', click: toggleWindow },
-    { label: '刷新数据', click: async () => refreshSnapshot(true) },
-    {
-      label: preferences.alwaysOnTop ? '取消置顶' : '窗口置顶',
-      click: () => {
-        preferences.alwaysOnTop = !preferences.alwaysOnTop;
-        savePreferences();
-        if (mainWindow) mainWindow.setAlwaysOnTop(preferences.alwaysOnTop);
-        updateTrayMenu();
-        broadcastPreferences();
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: '打开 / 隐藏 (Ctrl+Alt+U)', click: toggleWindow },
+      { label: '刷新数据', click: async () => refreshSnapshot(true) },
+      {
+        label: preferences.alwaysOnTop ? '取消置顶' : '窗口置顶',
+        click: () => {
+          preferences.alwaysOnTop = !preferences.alwaysOnTop;
+          savePreferences();
+          if (mainWindow) mainWindow.setAlwaysOnTop(preferences.alwaysOnTop);
+          updateTrayMenu();
+          broadcastPreferences();
+        }
+      },
+      { type: 'separator' },
+      {
+        label: '退出',
+        click: () => {
+          isQuitting = true;
+          app.quit();
+        }
       }
-    },
-    { type: 'separator' },
-    {
-      label: '退出',
-      click: () => {
-        isQuitting = true;
-        app.quit();
-      }
-    }
-  ]));
+    ])
+  );
 }
 
 function createTray() {
@@ -216,47 +260,189 @@ function broadcastPreferences() {
   }
 }
 
-async function refreshSnapshot(force = false) {
-  if (!force && cachedSnapshot && Date.now() - new Date(cachedSnapshot.refreshedAt).getTime() < 8000) {
-    return cachedSnapshot;
-  }
-  const previousSnapshot = cachedSnapshot;
-  let nextSnapshot;
-  try {
-    nextSnapshot = await loadSnapshot();
-  } catch (error) {
-    if (!previousSnapshot) throw error;
-    cachedSnapshot = {
-      ...previousSnapshot,
-      diagnostics: [
-        ...(Array.isArray(previousSnapshot.diagnostics) ? previousSnapshot.diagnostics : []),
-        {
-          id: 'cached-snapshot-after-error',
-          message: `本次刷新失败，已保留上一次有效快照：${error.message}`
-        }
-      ]
-    };
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('snapshot-updated', cachedSnapshot);
+function rejectWorkerRequests(error) {
+  for (const request of workerRequests.values()) request.reject(error);
+  workerRequests.clear();
+}
+
+function ensureSnapshotWorker() {
+  if (snapshotWorker) return snapshotWorker;
+  const worker = new Worker(path.join(__dirname, 'services', 'snapshotWorker.js'));
+  snapshotWorker = worker;
+
+  worker.on('message', (message) => {
+    const request = workerRequests.get(message && message.id);
+    if (!request) return;
+    workerRequests.delete(message.id);
+    if (message.error) {
+      const error = new Error(message.error.message);
+      error.name = message.error.name || 'Error';
+      if (message.error.stack) error.stack = message.error.stack;
+      request.reject(error);
+      return;
     }
-    return cachedSnapshot;
-  }
-  cachedSnapshot = mergeWithCachedLimits(nextSnapshot, previousSnapshot);
+    request.resolve(message.snapshot);
+  });
+
+  worker.on('error', (error) => {
+    rejectWorkerRequests(error);
+  });
+
+  worker.on('exit', (code) => {
+    if (snapshotWorker === worker) snapshotWorker = null;
+    if (code !== 0 && !isQuitting) {
+      rejectWorkerRequests(new Error(`Snapshot worker exited with code ${code}.`));
+    }
+  });
+
+  return worker;
+}
+
+function loadSnapshotInWorker() {
+  const worker = ensureSnapshotWorker();
+  const id = nextWorkerRequestId;
+  nextWorkerRequestId += 1;
+  return new Promise((resolve, reject) => {
+    workerRequests.set(id, { resolve, reject });
+    worker.postMessage({ id });
+  });
+}
+
+function withDiagnostic(snapshot, diagnostic) {
+  const diagnostics = (Array.isArray(snapshot.diagnostics) ? snapshot.diagnostics : []).filter(
+    (item) => item && item.id !== diagnostic.id
+  );
+  diagnostics.push(diagnostic);
+  return {
+    ...snapshot,
+    diagnostics: diagnostics.slice(-50)
+  };
+}
+
+function publishSnapshot(snapshot, sequence) {
+  if (sequence < appliedRefreshSequence) return cachedSnapshot;
+  appliedRefreshSequence = sequence;
+  cachedSnapshot = snapshot;
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('snapshot-updated', cachedSnapshot);
   }
   return cachedSnapshot;
 }
 
+async function performSnapshotRefresh(sequence) {
+  const previousSnapshot = cachedSnapshot;
+  let nextSnapshot;
+  try {
+    nextSnapshot = await loadSnapshotInWorker();
+  } catch (error) {
+    if (!previousSnapshot) throw error;
+    return publishSnapshot(
+      withDiagnostic(previousSnapshot, {
+        id: 'cached-snapshot-after-error',
+        message: `本次刷新失败，已保留上一次有效快照：${error.message}`
+      }),
+      sequence
+    );
+  }
+
+  return publishSnapshot(mergeWithCachedLimits(nextSnapshot, previousSnapshot), sequence);
+}
+
+async function refreshSnapshot(force = false) {
+  if (!force && cachedSnapshot && Date.now() - new Date(cachedSnapshot.refreshedAt).getTime() < 8000) {
+    return cachedSnapshot;
+  }
+  if (refreshPromise) return refreshPromise;
+
+  const sequence = refreshSequence + 1;
+  refreshSequence = sequence;
+  const operation = performSnapshotRefresh(sequence);
+  refreshPromise = operation;
+  try {
+    return await operation;
+  } finally {
+    if (refreshPromise === operation) refreshPromise = null;
+  }
+}
+
+function assertTrustedIpcEvent(event) {
+  if (
+    !mainWindow ||
+    mainWindow.isDestroyed() ||
+    event.sender !== mainWindow.webContents ||
+    event.senderFrame !== mainWindow.webContents.mainFrame
+  ) {
+    throw new Error('Rejected IPC request from an unknown renderer.');
+  }
+}
+
+function isPathInside(childPath, parentPath) {
+  const relative = path.relative(parentPath, childPath);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function currentAllowedOpenPaths() {
+  const paths = new Set();
+  const columns = cachedSnapshot && cachedSnapshot.taskBoard && cachedSnapshot.taskBoard.columns;
+  for (const column of Array.isArray(columns) ? columns : []) {
+    for (const item of Array.isArray(column.items) ? column.items : []) {
+      if (typeof item.path === 'string' && item.path.trim()) {
+        paths.add(path.resolve(item.path).toLowerCase());
+      }
+    }
+  }
+  return paths;
+}
+
+async function openSafePath(filePath) {
+  if (typeof filePath !== 'string' || !filePath.trim()) {
+    throw new TypeError('A non-empty path is required.');
+  }
+
+  const resolved = path.resolve(filePath);
+  if (!currentAllowedOpenPaths().has(resolved.toLowerCase())) {
+    throw new Error('The requested path is not present in the current Codex snapshot.');
+  }
+  const stat = await fs.promises.stat(resolved);
+  if (stat.isDirectory()) {
+    const errorMessage = await shell.openPath(resolved);
+    if (errorMessage) throw new Error(errorMessage);
+    return { opened: true, kind: 'directory' };
+  }
+
+  const automationsRoot = path.join(app.getPath('home'), '.codex', 'automations');
+  if (stat.isFile() && path.extname(resolved).toLowerCase() === '.toml' && isPathInside(resolved, automationsRoot)) {
+    shell.showItemInFolder(resolved);
+    return { opened: true, kind: 'automation' };
+  }
+
+  throw new Error('Only workspace directories and Codex automation TOML files can be opened.');
+}
+
 function registerIpc() {
-  ipcMain.handle('snapshot:get', () => refreshSnapshot(false));
-  ipcMain.handle('snapshot:refresh', () => refreshSnapshot(true));
-  ipcMain.handle('preferences:get', () => preferences);
-  ipcMain.handle('preferences:set', (_event, next) => {
+  ipcMain.handle('snapshot:get', (event) => {
+    assertTrustedIpcEvent(event);
+    return refreshSnapshot(false);
+  });
+  ipcMain.handle('snapshot:refresh', (event) => {
+    assertTrustedIpcEvent(event);
+    return refreshSnapshot(true);
+  });
+  ipcMain.handle('preferences:get', (event) => {
+    assertTrustedIpcEvent(event);
+    return { ...preferences };
+  });
+  ipcMain.handle('preferences:set', (event, next) => {
+    assertTrustedIpcEvent(event);
+    if (!next || typeof next !== 'object' || Array.isArray(next)) {
+      throw new TypeError('Preferences must be an object.');
+    }
+    const validated = {};
+    if (['dark', 'light', 'system'].includes(next.theme)) validated.theme = next.theme;
+    if (typeof next.alwaysOnTop === 'boolean') validated.alwaysOnTop = next.alwaysOnTop;
     preferences = {
       ...preferences,
-      ...next,
-      theme: ['dark', 'light', 'system'].includes(next.theme) ? next.theme : preferences.theme
+      ...validated
     };
     savePreferences();
     if (mainWindow) mainWindow.setAlwaysOnTop(Boolean(preferences.alwaysOnTop));
@@ -264,8 +450,12 @@ function registerIpc() {
     broadcastPreferences();
     return preferences;
   });
-  ipcMain.handle('window:action', (_event, action) => {
+  ipcMain.handle('window:action', (event, action) => {
+    assertTrustedIpcEvent(event);
     if (!mainWindow) return false;
+    if (!['minimize', 'hide', 'toggleAlwaysOnTop'].includes(action)) {
+      throw new Error(`Unsupported window action: ${action}`);
+    }
     if (action === 'minimize') mainWindow.minimize();
     if (action === 'hide') mainWindow.hide();
     if (action === 'toggleAlwaysOnTop') {
@@ -275,14 +465,11 @@ function registerIpc() {
       updateTrayMenu();
       broadcastPreferences();
     }
-    if (action === 'openDevTools') mainWindow.webContents.openDevTools({ mode: 'detach' });
     return true;
   });
-  ipcMain.handle('shell:openPath', (_event, filePath) => {
-    if (typeof filePath === 'string' && filePath.length > 0) {
-      shell.openPath(filePath);
-    }
-    return true;
+  ipcMain.handle('shell:openPath', async (event, filePath) => {
+    assertTrustedIpcEvent(event);
+    return openSafePath(filePath);
   });
 }
 
@@ -303,4 +490,7 @@ app.on('window-all-closed', (event) => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  isQuitting = true;
+  rejectWorkerRequests(new Error('Application is quitting.'));
+  if (snapshotWorker) snapshotWorker.terminate();
 });
