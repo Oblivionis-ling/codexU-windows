@@ -64,9 +64,22 @@ function Copy-LegacyPreferences {
 
 try {
   Write-Host 'Finding the newest Codex-Usage release...'
-  $releases = @(Invoke-RestMethod -Uri "https://api.github.com/repos/$repository/releases?per_page=20" -Headers $headers)
-  $release = $releases | Where-Object { -not $_.draft } | Select-Object -First 1
-  if (-not $release) { throw 'No published release is available.' }
+  $release = $null
+  for ($attempt = 1; $attempt -le 3 -and -not $release; $attempt += 1) {
+    $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repository/releases?per_page=20" -Headers $headers
+    foreach ($candidate in $releases) {
+      if ($candidate.draft) { continue }
+      $compatibleAsset = @($candidate.assets) |
+        Where-Object { $_.name -match '^Codex-Usage-.+-portable\.exe$' } |
+        Select-Object -First 1
+      if ($compatibleAsset) {
+        $release = $candidate
+        break
+      }
+    }
+    if (-not $release -and $attempt -lt 3) { Start-Sleep -Seconds 2 }
+  }
+  if (-not $release) { throw 'No compatible published release is available.' }
 
   $portableAsset = @($release.assets) |
     Where-Object { $_.name -match '^Codex-Usage-.+-portable\.exe$' } |
