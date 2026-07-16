@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
 const { loadSnapshot } = require('./services/codexData');
-const { updateResetHistory } = require('./services/resetHistory');
+const { updateFullResetHistory } = require('./services/resetHistory');
 
 const RATE_LIMIT_CACHE_GRACE_MS = 5 * 60 * 1000;
 
@@ -22,8 +22,16 @@ let resetHistoryState = null;
 let preferences = {
   theme: 'dark',
   alwaysOnTop: true,
-  widgetVersion: 3
+  subscriptionPriceUSD: null,
+  widgetVersion: 4
 };
+
+function normalizeSubscriptionPrice(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0 || numeric > 10_000) return null;
+  return Math.round(numeric * 100) / 100;
+}
 
 function hasUsableRateLimit(limit) {
   return Boolean(
@@ -52,6 +60,8 @@ function mergeWithCachedLimits(nextSnapshot, previousSnapshot) {
     Number.isFinite(previousAgeMs) &&
     previousAgeMs >= 0 &&
     previousAgeMs <= RATE_LIMIT_CACHE_GRACE_MS;
+  const mayUseCachedSnapshot =
+    Number.isFinite(previousAgeMs) && previousAgeMs >= 0 && previousAgeMs <= RATE_LIMIT_CACHE_GRACE_MS;
 
   if (mayUseCachedLimits) {
     for (const [index, key] of keys.entries()) {
@@ -64,6 +74,11 @@ function mergeWithCachedLimits(nextSnapshot, previousSnapshot) {
 
   if (!merged.account && previousSnapshot.account) {
     merged.account = previousSnapshot.account;
+  }
+
+  if (!merged.fullResetCredits && previousSnapshot.fullResetCredits && mayUseCachedSnapshot) {
+    merged.fullResetCredits = previousSnapshot.fullResetCredits;
+    preserved.push('Full reset 次数');
   }
 
   if (!Number(merged.cloudLifetimeTokens) && Number(previousSnapshot.cloudLifetimeTokens)) {
@@ -93,6 +108,8 @@ if (process.argv.includes('--smoke')) {
           hasSecondaryLimit: Boolean(snapshot.secondary),
           primary: snapshot.primary,
           secondary: snapshot.secondary,
+          account: snapshot.account,
+          fullResetCredits: snapshot.fullResetCredits,
           localThreads: snapshot.local && snapshot.local.threadsCount,
           todayTokens: snapshot.local && snapshot.local.todayTokens,
           sevenDayTokens: snapshot.local && snapshot.local.sevenDayTokens,
@@ -121,19 +138,24 @@ function preferencesPath() {
 }
 
 function resetHistoryPath() {
-  return path.join(app.getPath('userData'), 'reset-history.json');
+  return path.join(app.getPath('userData'), 'full-reset-history.json');
 }
 
 function loadPreferences() {
   try {
     const raw = fs.readFileSync(preferencesPath(), 'utf8');
     const stored = JSON.parse(raw);
-    const needsCompactWidgetMigration = Number(stored.widgetVersion || 0) < 3;
+    const storedWidgetVersion = Number(stored.widgetVersion || 0);
+    const needsCompactWidgetMigration = storedWidgetVersion < 3;
+    const needsCurrentWidgetMigration = storedWidgetVersion < 4;
     preferences = { ...preferences, ...stored };
     delete preferences.language;
+    preferences.subscriptionPriceUSD = normalizeSubscriptionPrice(preferences.subscriptionPriceUSD);
     if (needsCompactWidgetMigration) {
       preferences.alwaysOnTop = true;
-      preferences.widgetVersion = 3;
+    }
+    if (needsCurrentWidgetMigration) {
+      preferences.widgetVersion = 4;
       savePreferences();
     }
   } catch {
@@ -159,7 +181,7 @@ function loadResetHistory() {
 }
 
 function attachResetHistory(snapshot) {
-  const result = updateResetHistory(resetHistoryState, [snapshot.primary, snapshot.secondary]);
+  const result = updateFullResetHistory(resetHistoryState, snapshot.fullResetCredits);
   const changed = JSON.stringify(result.state) !== JSON.stringify(resetHistoryState);
   resetHistoryState = result.state;
   if (changed) {
@@ -170,7 +192,16 @@ function attachResetHistory(snapshot) {
       console.warn('Failed to save reset history:', error.message);
     }
   }
-  return { ...snapshot, resetHistory: result.summary };
+  return { ...snapshot, fullResetHistory: result.summary };
+}
+
+function applyAlwaysOnTop() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const enabled = Boolean(preferences.alwaysOnTop);
+  mainWindow.setAlwaysOnTop(enabled, enabled ? 'screen-saver' : 'normal');
+  if (typeof mainWindow.setVisibleOnAllWorkspaces === 'function') {
+    mainWindow.setVisibleOnAllWorkspaces(enabled, { visibleOnFullScreen: enabled });
+  }
 }
 
 function createTrayImage() {
@@ -183,8 +214,8 @@ function createTrayImage() {
 
 function createWindow() {
   const { workArea } = require('electron').screen.getPrimaryDisplay();
-  const defaultWidth = Math.min(420, workArea.width - 24);
-  const defaultHeight = Math.min(220, workArea.height - 24);
+  const defaultWidth = Math.min(372, workArea.width - 24);
+  const defaultHeight = Math.min(192, workArea.height - 24);
   const defaultX = workArea.x + workArea.width - defaultWidth - 20;
   const defaultY = workArea.y + 20;
   mainWindow = new BrowserWindow({
@@ -226,10 +257,17 @@ function createWindow() {
     if (nextUrl !== rendererUrl) event.preventDefault();
   });
   mainWindow.loadFile(rendererEntry);
+  applyAlwaysOnTop();
 
   mainWindow.once('ready-to-show', () => {
+    applyAlwaysOnTop();
     mainWindow.show();
     mainWindow.focus();
+  });
+
+  mainWindow.on('show', applyAlwaysOnTop);
+  mainWindow.on('blur', () => {
+    if (preferences.alwaysOnTop) process.nextTick(applyAlwaysOnTop);
   });
 
   mainWindow.on('close', (event) => {
@@ -245,6 +283,7 @@ function toggleWindow() {
   if (mainWindow.isVisible()) {
     mainWindow.hide();
   } else {
+    applyAlwaysOnTop();
     mainWindow.show();
     mainWindow.focus();
     refreshSnapshot(true).catch((error) => {
@@ -253,18 +292,48 @@ function toggleWindow() {
   }
 }
 
+function setSubscriptionPrice(price) {
+  preferences.subscriptionPriceUSD = normalizeSubscriptionPrice(price);
+  savePreferences();
+  updateTrayMenu();
+  broadcastPreferences();
+}
+
+function subscriptionPriceMenu() {
+  const current = normalizeSubscriptionPrice(preferences.subscriptionPriceUSD);
+  const choices = [20, 30, 100, 200];
+  return {
+    label: current ? `套餐价格：$${current}/月` : '套餐价格：未设置',
+    submenu: [
+      {
+        label: '未设置（不猜测价格）',
+        type: 'radio',
+        checked: current === null,
+        click: () => setSubscriptionPrice(null)
+      },
+      ...choices.map((price) => ({
+        label: `$${price} / 月`,
+        type: 'radio',
+        checked: current === price,
+        click: () => setSubscriptionPrice(price)
+      }))
+    ]
+  };
+}
+
 function updateTrayMenu() {
   if (!tray) return;
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: '打开 / 隐藏 (Ctrl+U)', click: toggleWindow },
       { label: '刷新数据', click: async () => refreshSnapshot(true) },
+      subscriptionPriceMenu(),
       {
         label: preferences.alwaysOnTop ? '取消置顶' : '窗口置顶',
         click: () => {
           preferences.alwaysOnTop = !preferences.alwaysOnTop;
           savePreferences();
-          if (mainWindow) mainWindow.setAlwaysOnTop(preferences.alwaysOnTop);
+          applyAlwaysOnTop();
           updateTrayMenu();
           broadcastPreferences();
         }
@@ -474,12 +543,15 @@ function registerIpc() {
     const validated = {};
     if (['dark', 'light', 'system'].includes(next.theme)) validated.theme = next.theme;
     if (typeof next.alwaysOnTop === 'boolean') validated.alwaysOnTop = next.alwaysOnTop;
+    if (Object.hasOwn(next, 'subscriptionPriceUSD')) {
+      validated.subscriptionPriceUSD = normalizeSubscriptionPrice(next.subscriptionPriceUSD);
+    }
     preferences = {
       ...preferences,
       ...validated
     };
     savePreferences();
-    if (mainWindow) mainWindow.setAlwaysOnTop(Boolean(preferences.alwaysOnTop));
+    applyAlwaysOnTop();
     updateTrayMenu();
     broadcastPreferences();
     return preferences;
@@ -494,7 +566,7 @@ function registerIpc() {
     if (action === 'hide') mainWindow.hide();
     if (action === 'toggleAlwaysOnTop') {
       preferences.alwaysOnTop = !preferences.alwaysOnTop;
-      mainWindow.setAlwaysOnTop(preferences.alwaysOnTop);
+      applyAlwaysOnTop();
       savePreferences();
       updateTrayMenu();
       broadcastPreferences();

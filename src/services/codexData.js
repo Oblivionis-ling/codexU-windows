@@ -751,8 +751,19 @@ function parseRateLimits(result) {
   const root = result && (result.rateLimits || result.rate_limits || result.limits || result);
   return {
     primary: parseRateWindow(root && (root.primary || root.primaryWindow)),
-    secondary: parseRateWindow(root && (root.secondary || root.secondaryWindow))
+    secondary: parseRateWindow(root && (root.secondary || root.secondaryWindow)),
+    fullResetCredits: parseFullResetCredits(result)
   };
+}
+
+function parseFullResetCredits(result) {
+  if (!result || typeof result !== 'object') return null;
+  const credits = result.rateLimitResetCredits || result.rate_limit_reset_credits;
+  if (!credits || typeof credits !== 'object') return null;
+  const rawCount = credits.availableCount ?? credits.available_count;
+  const availableCount = Number(rawCount);
+  if (!Number.isFinite(availableCount) || availableCount < 0) return null;
+  return { availableCount: Math.floor(availableCount) };
 }
 
 function parseCloudUsage(result) {
@@ -812,6 +823,7 @@ function tryAppServerCommand(command, timeoutMs) {
       account: null,
       primary: null,
       secondary: null,
+      fullResetCredits: null,
       cloudLifetimeTokens: 0
     };
     let settled = false;
@@ -902,6 +914,7 @@ function tryAppServerCommand(command, timeoutMs) {
         const limits = parseRateLimits(message.result);
         snapshot.primary = limits.primary;
         snapshot.secondary = limits.secondary;
+        snapshot.fullResetCredits = limits.fullResetCredits;
         completed += 1;
       }
       if (message.id === 4) {
@@ -927,6 +940,7 @@ async function readAppServer(messages) {
     account: null,
     primary: null,
     secondary: null,
+    fullResetCredits: null,
     cloudLifetimeTokens: 0
   };
 }
@@ -950,6 +964,7 @@ async function loadSnapshot() {
     account: appServer.account,
     primary: appServer.primary,
     secondary: appServer.secondary,
+    fullResetCredits: appServer.fullResetCredits,
     cloudLifetimeTokens: appServer.cloudLifetimeTokens,
     local,
     taskBoard,
@@ -970,6 +985,7 @@ module.exports = {
   extractBreakdown,
   parseRateWindow,
   parseRateLimits,
+  parseFullResetCredits,
   parseSimpleToml,
   startOfLocalDay,
   startOfLocalMonth

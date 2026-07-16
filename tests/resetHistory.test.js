@@ -1,48 +1,49 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { updateResetHistory } = require('../src/services/resetHistory');
+const { updateFullResetHistory } = require('../src/services/resetHistory');
 
-const DAY = 24 * 60 * 60 * 1000;
-const WEEK_MINS = 7 * 24 * 60;
-
-function limit(nextResetAt) {
-  return {
-    remainingPercent: 99,
-    windowDurationMins: WEEK_MINS,
-    resetsAt: nextResetAt
-  };
-}
-
-test('reset tracking starts from the inferred previous boundary without inventing a count', () => {
+test('full-reset tracking starts from the server-provided available count', () => {
   const now = Date.UTC(2026, 6, 16, 12);
-  const result = updateResetHistory(null, [limit(now + 7 * DAY)], now);
+  const result = updateFullResetHistory(null, { availableCount: 3 }, now);
 
-  assert.equal(result.summary.count, 0);
-  assert.equal(result.summary.lastResetAt, now);
+  assert.equal(result.summary.availableCount, 3);
+  assert.equal(result.summary.lastDecreasedAt, null);
+  assert.equal(result.state.availableCount, 3);
 });
 
-test('a newly completed quota window increments the local reset count', () => {
+test('a lower full-reset credit count records when it was observed', () => {
   const firstNow = Date.UTC(2026, 6, 16, 12);
-  const first = updateResetHistory(null, [limit(firstNow + 7 * DAY)], firstNow);
-  const secondNow = firstNow + 7 * DAY + 1000;
-  const second = updateResetHistory(first.state, [limit(firstNow + 14 * DAY)], secondNow);
+  const first = updateFullResetHistory(null, { availableCount: 3 }, firstNow);
+  const secondNow = firstNow + 60_000;
+  const second = updateFullResetHistory(first.state, { availableCount: 2 }, secondNow);
 
-  assert.equal(second.summary.count, 1);
-  assert.equal(second.summary.lastResetAt, firstNow + 7 * DAY);
+  assert.equal(second.summary.availableCount, 2);
+  assert.equal(second.summary.lastDecreasedAt, secondNow);
 });
 
-test('a small reset schedule correction does not count as a completed window', () => {
+test('newly granted full-reset credits do not look like expirations', () => {
   const now = Date.UTC(2026, 6, 16, 12);
-  const first = updateResetHistory(null, [limit(now + 7 * DAY)], now);
-  const corrected = updateResetHistory(first.state, [limit(now + 7 * DAY + 30 * 60 * 1000)], now + 60 * 60 * 1000);
+  const first = updateFullResetHistory(null, { availableCount: 1 }, now);
+  const increased = updateFullResetHistory(first.state, { availableCount: 2 }, now + 60_000);
 
-  assert.equal(corrected.summary.count, 0);
+  assert.equal(increased.summary.availableCount, 2);
+  assert.equal(increased.summary.lastDecreasedAt, null);
 });
 
-test('a reset window that has not started does not report a future previous reset', () => {
+test('legacy seven-day history is not reused as full-reset credit history', () => {
   const now = Date.UTC(2026, 6, 16, 12);
-  const result = updateResetHistory(null, [limit(now + 14 * DAY)], now);
+  const result = updateFullResetHistory({ version: 1, count: 99, lastResetAt: now - 1 }, { availableCount: 1 }, now);
 
-  assert.equal(result.summary.count, 0);
-  assert.equal(result.summary.lastResetAt, null);
+  assert.equal(result.summary.availableCount, 1);
+  assert.equal(result.summary.lastDecreasedAt, null);
+  assert.equal(result.state.version, 2);
+});
+
+test('missing server credits do not erase the last observed local count', () => {
+  const now = Date.UTC(2026, 6, 16, 12);
+  const first = updateFullResetHistory(null, { availableCount: 1 }, now);
+  const missing = updateFullResetHistory(first.state, null, now + 60_000);
+
+  assert.equal(missing.summary.availableCount, null);
+  assert.equal(missing.state.availableCount, 1);
 });

@@ -1,6 +1,6 @@
 {
   "name": "codexu-windows",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Compact Windows desktop widget for Codex quota, resets and subscription value.",
   "main": "src/main.js",
   "author": "CodexU Windows",

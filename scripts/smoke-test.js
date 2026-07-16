@@ -6,6 +6,8 @@ loadSnapshot()
       refreshedAt: snapshot.refreshedAt,
       hasPrimaryLimit: Boolean(snapshot.primary),
       hasSecondaryLimit: Boolean(snapshot.secondary),
+      account: snapshot.account,
+      fullResetCredits: snapshot.fullResetCredits,
       localThreads: snapshot.local && snapshot.local.threadsCount,
       todayTokens: snapshot.local && snapshot.local.todayTokens,
       sevenDayTokens: snapshot.local && snapshot.local.sevenDayTokens,

@@ -1,5 +1,11 @@
 # CodexU Windows
 
+## 0.3.1 版本说明
+
+0.3.1 修复窗口置顶层级，切换到其他窗口后仍保持置顶；去掉组件外围灰边，并将窗口从 420 × 220 缩小到 372 × 192。套餐名称现在按 Codex 返回的真实类型显示，`prolite` 会显示为独立的 `Pro Lite`，不再误判为 Plus；套餐价格无法从 app-server 获取，因此不再猜测，可在托盘菜单中手动选择美元月费。
+
+“重置次数”已改为 OpenAI 返回的 full reset 可用次数，即 `rateLimitResetCredits.availableCount`，不再按普通 7d 额度窗口本地累计。OpenAI 当前没有返回 full reset 的过期日期，应用只会在可用次数减少时记录本机观察到的日期，并明确标注“有效期未提供”。
+
 ## 0.3.0 版本说明
 
 0.3.0 将界面精简为接近 macOS 两格小组件大小的桌面组件，只保留额度圆环、重置倒计时与本地重置记录、最近一次重置日期，以及“已使用价值 / 套餐价格”的薅羊毛进度。窗口默认置顶，使用 `Ctrl + U` 全局快捷键显示或隐藏，并在显示时实时刷新额度。
@@ -16,11 +22,12 @@ CodexU Windows 是一个紧凑的 Windows 桌面小组件，用于查看 Codex �
 
 - Windows 托盘图标与无边框透明桌面窗口。
 - `Ctrl + U` 显示/隐藏窗口。
-- 固定 420 × 220 双格比例，可拖动、刷新和关闭隐藏。
+- 固定 372 × 192 双格比例，可拖动、刷新和关闭隐藏。
 - 接近 macOS 小组件的深色玻璃、系统字体与简约信息层级。
-- 展示 Codex 额度圆环、下一次重置倒计时和最近一次重置日期。
-- 在本地累计观察到的完整额度重置次数。
+- 展示 Codex 额度圆环与 OpenAI full reset 可用次数。
+- 本地记录 full reset 可用次数最近一次减少的日期；服务端未提供的过期日期不会被推断。
 - 解析 Codex session JSONL 中的 `token_count` 事件，显示“本月使用价值 / 套餐价格”。
+- 根据账号返回值显示真实套餐类型，并允许在托盘菜单设置套餐价格。
 - 在后台 Worker 中读取数据，并按文件修改时间与字节偏移增量解析 session 日志。
 - 不展示或输出 `auth.json` 中的 token 值。
 
@@ -28,7 +35,8 @@ CodexU Windows 是一个紧凑的 Windows 桌面小组件，用于查看 Codex �
 
 - 账号额度：`codex app-server` JSON-RPC。
 - 详细 token：`%USERPROFILE%\.codex\sessions` 与 `archived_sessions` 中的 JSONL 事件。
-- 重置历史：应用用户数据目录中的 `reset-history.json`，仅记录次数与时间。
+- Full reset：`codex app-server` 返回的 `rateLimitResetCredits.availableCount`。
+- Full reset 变化记录：应用用户数据目录中的 `full-reset-history.json`，只记录本机观察到的可用次数与最近减少时间；旧版 `reset-history.json` 不会被覆盖。
 - 若系统 PATH / WindowsApps 中的 `codex` 不可执行，应用会优先使用随依赖安装的 `@openai/codex` CLI。
 
 ## 开发运行

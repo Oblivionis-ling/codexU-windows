@@ -2,7 +2,8 @@ const state = {
   snapshot: null,
   preferences: {
     theme: 'dark',
-    alwaysOnTop: true
+    alwaysOnTop: true,
+    subscriptionPriceUSD: null
   },
   loading: true,
   error: null,
@@ -70,20 +71,6 @@ function durationLabel(minutes) {
   return value > 0 ? `${value}m` : '额度';
 }
 
-function formatCountdown(value) {
-  const resetAt = timestamp(value);
-  if (!resetAt) return '--';
-  const remaining = resetAt - Date.now();
-  if (remaining <= 0) return '正在重置';
-  const totalMinutes = Math.max(1, Math.ceil(remaining / 60_000));
-  const days = Math.floor(totalMinutes / 1440);
-  const hours = Math.floor((totalMinutes % 1440) / 60);
-  const minutes = totalMinutes % 60;
-  if (days > 0) return `${days}天 ${hours}小时`;
-  if (hours > 0) return `${hours}小时 ${minutes}分`;
-  return `${minutes}分钟`;
-}
-
 function formatDate(value, includeTime = false) {
   const dateValue = timestamp(value);
   if (!dateValue) return '--';
@@ -122,20 +109,30 @@ function money(value) {
   }).format(number);
 }
 
-function planDetails(planType) {
+function planDetails(planType, configuredPrice) {
   const normalized = String(planType || '')
     .trim()
     .toLowerCase();
-  if (normalized.includes('prolite') || normalized.includes('plus')) return { label: 'Plus', price: 20 };
-  if (normalized === 'pro' || normalized.includes('pro200')) return { label: 'Pro', price: 200 };
-  if (normalized.includes('business') || normalized.includes('team')) return { label: 'Business', price: 30 };
-  return { label: normalized ? String(planType) : '套餐', price: 20 };
-}
-
-function inferredLastReset(limit) {
-  const resetAt = timestamp(limit?.resetsAt);
-  const duration = Number(limit?.windowDurationMins || 0) * 60_000;
-  return resetAt && duration ? resetAt - duration : null;
+  const labels = {
+    free: 'Free',
+    go: 'Go',
+    plus: 'Plus',
+    pro: 'Pro',
+    prolite: 'Pro Lite',
+    team: 'Team',
+    self_serve_business_usage_based: 'Business',
+    business: 'Business',
+    enterprise_cbp_usage_based: 'Enterprise',
+    enterprise: 'Enterprise',
+    edu: 'Edu'
+  };
+  const knownPrices = { plus: 20, pro: 200, team: 30, business: 30 };
+  const selectedPrice = Number(configuredPrice);
+  const price = Number.isFinite(selectedPrice) && selectedPrice > 0 ? selectedPrice : (knownPrices[normalized] ?? null);
+  return {
+    label: labels[normalized] || (normalized ? String(planType) : '未知套餐'),
+    price
+  };
 }
 
 function renderLoading() {
@@ -185,50 +182,51 @@ function renderQuota(limit) {
   `;
 }
 
-function renderResetCard(limit, resetHistory) {
-  const resetAt = timestamp(limit?.resetsAt);
-  const lastResetAt = timestamp(resetHistory?.lastResetAt) || inferredLastReset(limit);
-  const count = Math.max(0, Number(resetHistory?.count || 0));
+function renderResetCard(fullResetHistory) {
+  const rawCount = fullResetHistory?.availableCount;
+  const count = rawCount === null || rawCount === undefined ? null : Math.max(0, Math.floor(Number(rawCount)));
+  const lastDecreasedAt = timestamp(fullResetHistory?.lastDecreasedAt);
   return `
     <section class="metric-card reset-card">
       <div class="metric-heading">
-        <span>${icon('reset')}重置</span>
-        <b>${count} 次</b>
+        <span>${icon('reset')}Full reset</span>
+        <b>${count === null || !Number.isFinite(count) ? '--' : `${count} 次`}</b>
       </div>
-      <strong class="countdown" data-reset-at="${resetAt || ''}">${formatCountdown(resetAt)}</strong>
-      <div class="metric-meta">
-        <span>最近 ${formatDate(lastResetAt)}</span>
-        <span>下次 ${formatDate(resetAt, true)}</span>
+      <strong class="countdown">${count === null || !Number.isFinite(count) ? '暂不可用' : `${count} 次可用`}</strong>
+      <div class="metric-meta" title="OpenAI 未提供 full reset 的过期日期；这里只记录可用次数最近一次减少的时间">
+        <span>最近减少 ${formatDate(lastDecreasedAt)}</span>
+        <span>有效期未提供</span>
       </div>
     </section>
   `;
 }
 
-function renderValueCard(snapshot) {
+function renderValueCard(snapshot, preferences) {
   const detailed = snapshot?.local?.detailedUsage || {};
   const month = detailed.month || {};
   const earned = Number(month.estimatedCostUSD || 0);
   const unpriced = Number(month.unpricedTokens || 0);
-  const plan = planDetails(snapshot?.account?.planType);
-  const rawProgress = plan.price > 0 ? (earned / plan.price) * 100 : 0;
+  const plan = planDetails(snapshot?.account?.planType, preferences?.subscriptionPriceUSD);
+  const hasPrice = Number.isFinite(plan.price) && plan.price > 0;
+  const rawProgress = hasPrice ? (earned / plan.price) * 100 : 0;
   const progress = clamp(rawProgress);
-  const multiple = plan.price > 0 ? earned / plan.price : 0;
+  const multiple = hasPrice ? earned / plan.price : 0;
   return `
     <section class="metric-card value-card">
       <div class="metric-heading">
         <span>${icon('value')}薅羊毛进度</span>
-        <b>${multiple >= 1 ? `${multiple.toFixed(multiple >= 10 ? 0 : 1)}×` : `${Math.round(rawProgress)}%`}</b>
+        <b>${hasPrice ? (multiple >= 1 ? `${multiple.toFixed(multiple >= 10 ? 0 : 1)}×` : `${Math.round(rawProgress)}%`) : '待设置'}</b>
       </div>
       <div class="value-line">
         <strong>${unpriced > 0 ? '≥' : ''}${money(earned)}</strong>
-        <span>/ ${money(plan.price)}</span>
+        <span>/ ${hasPrice ? money(plan.price) : '未设置'}</span>
       </div>
       <div class="value-track" role="progressbar" aria-label="薅羊毛进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progress)}">
         <i style="width:${progress}%"></i>
       </div>
       <div class="metric-meta">
         <span>${escapeHtml(plan.label)} 套餐</span>
-        <span>本月估算</span>
+        <span>${hasPrice ? '本月估算' : '托盘中设置价格'}</span>
       </div>
     </section>
   `;
@@ -272,8 +270,8 @@ function render() {
       <main class="widget-content">
         ${renderQuota(primaryLimit)}
         <div class="metrics-stack">
-          ${renderResetCard(primaryLimit, snapshot.resetHistory)}
-          ${renderValueCard(snapshot)}
+          ${renderResetCard(snapshot.fullResetHistory)}
+          ${renderValueCard(snapshot, state.preferences)}
         </div>
       </main>
       <div class="refresh-stamp" title="最近刷新时间">${formatRefreshTime(snapshot.refreshedAt)}</div>
@@ -282,12 +280,6 @@ function render() {
 
   document.getElementById('refreshButton')?.addEventListener('click', refresh);
   document.getElementById('hideButton')?.addEventListener('click', () => window.codexU.windowAction('hide'));
-}
-
-function updateCountdown() {
-  for (const element of document.querySelectorAll('[data-reset-at]')) {
-    element.textContent = formatCountdown(element.getAttribute('data-reset-at'));
-  }
 }
 
 async function refresh() {
@@ -331,8 +323,6 @@ async function init() {
 setInterval(() => {
   if (document.visibilityState === 'visible') refresh();
 }, 15_000);
-
-setInterval(updateCountdown, 1000);
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') refresh();
