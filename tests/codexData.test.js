@@ -37,7 +37,7 @@ function tokenEvent(timestamp, inputTokens, cachedInputTokens, outputTokens) {
 }
 
 function createTempDir(t) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'codexu-test-'));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-usage-test-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   return directory;
 }

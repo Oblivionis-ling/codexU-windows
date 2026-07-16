@@ -141,7 +141,7 @@ function planDetails(planType, configuredPrice) {
 
 function renderLoading() {
   return `
-    <section class="widget-frame loading-frame" aria-label="正在加载 CodexU">
+    <section class="widget-frame loading-frame" aria-label="正在加载 Codex-Usage">
       <div class="skeleton skeleton-title"></div>
       <div class="loading-grid">
         <div class="skeleton skeleton-ring"></div>
@@ -270,7 +270,7 @@ function render() {
         <div class="brand-block">
           <span class="brand-orb" aria-hidden="true"></span>
           <div>
-            <strong>codexU</strong>
+            <strong>Codex-Usage</strong>
             <span>${state.preferences.alwaysOnTop ? `${icon('pin')} 已置顶` : '桌面组件'}</span>
           </div>
         </div>
@@ -293,7 +293,7 @@ function render() {
   `;
 
   document.getElementById('refreshButton')?.addEventListener('click', refresh);
-  document.getElementById('hideButton')?.addEventListener('click', () => window.codexU.windowAction('hide'));
+  document.getElementById('hideButton')?.addEventListener('click', () => window.codexUsage.windowAction('hide'));
 }
 
 async function refresh() {
@@ -303,7 +303,7 @@ async function refresh() {
   render();
   const operation = (async () => {
     try {
-      state.snapshot = await window.codexU.refreshSnapshot();
+      state.snapshot = await window.codexUsage.refreshSnapshot();
       state.error = null;
     } catch (error) {
       state.error = error.message;
@@ -322,7 +322,10 @@ async function refresh() {
 
 async function init() {
   try {
-    const [preferences, snapshot] = await Promise.all([window.codexU.getPreferences(), window.codexU.getSnapshot()]);
+    const [preferences, snapshot] = await Promise.all([
+      window.codexUsage.getPreferences(),
+      window.codexUsage.getSnapshot()
+    ]);
     state.preferences = preferences;
     state.snapshot = snapshot;
     state.loading = false;
@@ -342,14 +345,14 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') refresh();
 });
 
-window.codexU.onSnapshotUpdated((snapshot) => {
+window.codexUsage.onSnapshotUpdated((snapshot) => {
   state.snapshot = snapshot;
   state.loading = false;
   state.error = null;
   render();
 });
 
-window.codexU.onPreferencesUpdated((preferences) => {
+window.codexUsage.onPreferencesUpdated((preferences) => {
   state.preferences = preferences;
   render();
 });
