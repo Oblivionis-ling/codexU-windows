@@ -10,6 +10,7 @@ const {
   extractBreakdown,
   isUsableDelta,
   modelTokenPrice,
+  parseFullResetCredits,
   parseRateLimits,
   parseSimpleToml,
   readDetailedUsage,
@@ -130,11 +131,30 @@ test('rate-limit variants and simple TOML are normalized', () => {
   assert.equal(limits.primary.windowDurationMins, 300);
   assert.equal(limits.secondary.remainingPercent, 59);
   assert.equal(limits.secondary.windowDurationMins, 10080);
+  assert.equal(limits.fullResetCredits, null);
 
   assert.deepEqual(parseSimpleToml('title = "Daily review"\nrrule = "FREQ=DAILY"\n'), {
     title: 'Daily review',
     rrule: 'FREQ=DAILY'
   });
+});
+
+test('OpenAI full-reset credits are parsed separately from quota windows', () => {
+  const result = {
+    rateLimits: {
+      primary: { usedPercent: 2, windowDurationMins: 10080, resetsAt: 1_800_000_000 },
+      secondary: null,
+      planType: 'prolite'
+    },
+    rateLimitResetCredits: { availableCount: 1 }
+  };
+
+  const limits = parseRateLimits(result);
+  assert.deepEqual(limits.fullResetCredits, { availableCount: 1 });
+  assert.deepEqual(parseFullResetCredits({ rate_limit_reset_credits: { available_count: 3 } }), {
+    availableCount: 3
+  });
+  assert.equal(parseFullResetCredits({ rateLimitResetCredits: null }), null);
 });
 
 test('a current single seven-day rate-limit window stays single', () => {

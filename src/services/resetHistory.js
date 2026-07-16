@@ -4,75 +4,42 @@ function timestamp(value) {
   return numeric > 100_000_000_000 ? numeric : numeric * 1000;
 }
 
-function validCount(value) {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : 0;
+function availableCount(credits) {
+  const raw = credits && typeof credits === 'object' ? credits.availableCount : credits;
+  if (raw === undefined || raw === null || raw === '') return null;
+  const numeric = Number(raw);
+  if (!Number.isFinite(numeric) || numeric < 0) return null;
+  return Math.floor(numeric);
 }
 
-function completedBoundary(nextResetAt, durationMs, now) {
-  if (!nextResetAt) return null;
-  if (!durationMs) return nextResetAt <= now ? nextResetAt : null;
-  if (nextResetAt > now) {
-    const boundary = nextResetAt - durationMs;
-    return boundary <= now ? boundary : null;
+function updateFullResetHistory(previousState, credits, now = Date.now()) {
+  const previous =
+    previousState && typeof previousState === 'object' && Number(previousState.version) === 2 ? previousState : {};
+  const previousCount = availableCount(previous.availableCount);
+  const currentCount = availableCount(credits);
+  let lastDecreasedAt = timestamp(previous.lastDecreasedAt);
+
+  if (currentCount !== null && previousCount !== null && currentCount < previousCount) {
+    lastDecreasedAt = now;
   }
-  return nextResetAt + Math.floor((now - nextResetAt) / durationMs) * durationMs;
-}
 
-function updateResetHistory(previousState, limits, now = Date.now()) {
-  const previous = previousState && typeof previousState === 'object' ? previousState : {};
-  const previousWindows = previous.windows && typeof previous.windows === 'object' ? previous.windows : {};
   const nextState = {
-    version: 1,
-    count: validCount(previous.count),
+    version: 2,
     trackingSince: previous.trackingSince || new Date(now).toISOString(),
-    windows: { ...previousWindows }
+    availableCount: currentCount ?? previousCount,
+    lastDecreasedAt
   };
-  let lastResetAt = timestamp(previous.lastResetAt);
 
-  for (const limit of Array.isArray(limits) ? limits : []) {
-    if (!limit || typeof limit !== 'object') continue;
-    const durationMins = Number(limit.windowDurationMins);
-    const durationMs = Number.isFinite(durationMins) && durationMins > 0 ? durationMins * 60_000 : 0;
-    const nextResetAt = timestamp(limit.resetsAt);
-    if (!nextResetAt) continue;
-
-    const key = durationMs ? `duration:${durationMins}` : 'default';
-    const previousWindow = previousWindows[key] && typeof previousWindows[key] === 'object' ? previousWindows[key] : {};
-    const latestBoundary = completedBoundary(nextResetAt, durationMs, now);
-    let lastCountedResetAt = timestamp(previousWindow.lastCountedResetAt);
-
-    if (!lastCountedResetAt && latestBoundary) {
-      lastCountedResetAt = latestBoundary;
-    } else if (latestBoundary && latestBoundary > lastCountedResetAt) {
-      const advance = latestBoundary - lastCountedResetAt;
-      const isRealReset = !durationMs || advance >= durationMs * 0.5;
-      if (isRealReset) {
-        const increments = durationMs ? Math.max(1, Math.round(advance / durationMs)) : 1;
-        nextState.count += increments;
-        lastCountedResetAt = latestBoundary;
-      }
-    }
-
-    if (latestBoundary) lastResetAt = Math.max(lastResetAt || 0, latestBoundary);
-    nextState.windows[key] = {
-      nextResetAt,
-      lastCountedResetAt
-    };
-  }
-
-  nextState.lastResetAt = lastResetAt;
   return {
     state: nextState,
     summary: {
-      count: nextState.count,
-      lastResetAt,
+      availableCount: currentCount,
+      lastDecreasedAt,
       trackingSince: nextState.trackingSince
     }
   };
 }
 
 module.exports = {
-  completedBoundary,
-  updateResetHistory
+  updateFullResetHistory
 };
